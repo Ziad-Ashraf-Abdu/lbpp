@@ -22,7 +22,7 @@ class BleService {
   // --- CONFIGURATION ---
   // SET TO FALSE: This forces the app to use the phone's real Bluetooth radio.
   // If you are on an Emulator without Bluetooth passthrough, SCANNING WILL FAIL (find 0 devices).
-  static const bool isSimulation = false;
+  static const bool isSimulation = true;
 
   /// Starts scanning for the specific ESP32 service
   Future<void> scanAndHandshake(String activationKey) async {

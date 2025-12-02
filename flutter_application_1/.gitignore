@@ -27,11 +27,11 @@ migrate_working_dir/
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
-.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-build/
+/build/
+/coverage/
 
 # Symbolication related
 app.*.symbols
@@ -43,19 +43,3 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-
-# --- ANDROID CUSTOM IGNORE (for different Gradle/AGP versions) ---
-
-# Ignore global Android gradle settings (local developer dependent)
-android/settings.gradle
-
-# Ignore the entire Android Gradle directory
-android/gradle/
-
-# Ignore Gradle wrapper scripts and properties
-android/gradlew
-android/gradlew.bat
-android/gradle/wrapper/gradle-wrapper.properties
-android/gradle/wrapper/
-
-# ---------------------------------------------------------------
