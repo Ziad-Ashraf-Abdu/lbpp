@@ -106,18 +106,20 @@ class _SpinePainter extends CustomPainter {
       ..color = Colors.white
       ..style = PaintingStyle.fill;
 
-    for (double i = 0.0; i <= 1.0; i += 0.2) {
-      // Get position on the curve
-      // (Simplified: In a real app, use PathMetrics to find exact distance)
-      // Here we just interpolate visually for the UI effect
-    }
-
+    // This is a simplified visualization. In a full implementation,
+    // we would calculate points along the bezier curve.
+    // For now, we just draw the base.
+    
     // Visual embellishment: Draw a "Base" for the sacrum
-    canvas.drawCircle(
-        Offset(path.getBounds().bottomCenter.dx, path.getBounds().bottomCenter.dy),
-        6,
-        nodePaint
-    );
+    // Safely accessing path bounds
+    final bounds = path.getBounds();
+    if (!bounds.isEmpty) {
+        canvas.drawCircle(
+            Offset(bounds.bottomCenter.dx, bounds.bottomCenter.dy),
+            6,
+            nodePaint
+        );
+    }
   }
 
   @override

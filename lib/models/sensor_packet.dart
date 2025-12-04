@@ -8,6 +8,7 @@ class SensorPacket {
   final int timestamp;            // For synchronization
   final double batteryLevel;      // System health
 
+
   SensorPacket({
     required this.flexionAngle,
     required this.lateralBendAngle,

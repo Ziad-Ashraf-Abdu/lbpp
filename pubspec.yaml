@@ -37,7 +37,7 @@ dependencies:
   fl_chart: ^0.66.0           # Graphs
   permission_handler: ^11.3.0 # Bluetooth permissions
   google_fonts: ^6.1.0        # Modern typography
-  vector_math: ^2.1.4         # 3D Math for Quaternions
+  vector_math: ^2.2.0         # 3D Math for Quaternions
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

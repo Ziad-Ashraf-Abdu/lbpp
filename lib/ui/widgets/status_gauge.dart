@@ -3,52 +3,43 @@ import '../../config/constants.dart';
 
 class StatusGauge extends StatelessWidget {
   final double angle;
+  final Color spineColor;
 
-  const StatusGauge({super.key, required this.angle});
+  const StatusGauge({super.key, required this.angle, required this.spineColor});
 
   @override
   Widget build(BuildContext context) {
-    // Determine Color based on Thresholds [cite: 200]
-    Color color;
+    // Determine label based on angle
     String label;
     if (angle < AppConstants.SAFE_LIMIT) {
-      color = Colors.green;
       label = "SAFE";
     } else if (angle < AppConstants.WARN_LIMIT) {
-      color = Colors.yellow;
       label = "CAUTION";
     } else {
-      color = Colors.red;
       label = "RISK";
     }
 
-    return Stack(
-      alignment: Alignment.center,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        SizedBox(
-          width: 250,
-          height: 250,
-          child: CircularProgressIndicator(
-            value: angle.clamp(0.0, 45.0) / 45.0, // Normalize 0-45 degrees
-            strokeWidth: 25,
-            backgroundColor: Colors.white10,
-            valueColor: AlwaysStoppedAnimation<Color>(color),
-            strokeCap: StrokeCap.round,
+        Text(
+          "${angle.toStringAsFixed(1)}°",
+          style: const TextStyle(
+            fontSize: 60,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
           ),
         ),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              "${angle.toStringAsFixed(1)}°",
-              style: const TextStyle(fontSize: 60, fontWeight: FontWeight.bold),
-            ),
-            Text(
-              label,
-              style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 2),
-            ),
-          ],
-        )
+        Text(
+          label,
+          style: TextStyle(
+              color: spineColor,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2
+          ),
+        ),
       ],
     );
   }

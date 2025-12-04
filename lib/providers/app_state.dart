@@ -1,26 +1,54 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import '../services/ble_service.dart';
 import '../services/encryption_service.dart';
 import '../services/cloud_service.dart';
+import '../models/biomechanical_data.dart'; // Add this import
+import '../services/biomechanical_analyzer.dart'; // Add this import
 
 class AppState extends ChangeNotifier {
   final BleService _bleService = BleService();
   final EncryptionService _cryptoService = EncryptionService();
   final CloudService _cloudService = CloudService();
+  final BiomechanicalAnalyzer _biomechanicalAnalyzer = BiomechanicalAnalyzer(); // Add analyzer
 
   String? _activationKey;
   BleStatus _connectionStatus = BleStatus.disconnected;
   double _lumbarAngle = 0.0;
   List<double> _dataBuffer = [];
 
+  // New biomechanical data fields
+  SpineKinematics? _currentSpineKinematics;
+  List<SpineKinematics> _spineHistory = [];
+  Map<String, dynamic> _motionAnalysis = {};
+  bool _useDummyData = true; // Start with dummy data
+  bool _isBiomechanicsActive = false;
+
+  StreamSubscription? _dummyDataSubscription;
+
   // Getters
   BleStatus get connectionStatus => _connectionStatus;
   double get lumbarAngle => _lumbarAngle;
   bool get isConnected => _connectionStatus == BleStatus.connected;
 
+  // New getters for biomechanical data
+  SpineKinematics? get currentSpineKinematics => _currentSpineKinematics;
+  List<SpineKinematics> get spineHistory => _spineHistory;
+  Map<String, dynamic> get motionAnalysis => _motionAnalysis;
+  bool get useDummyData => _useDummyData;
+  bool get isBiomechanicsActive => _isBiomechanicsActive;
+
   AppState() {
     _listenToBle();
+    _initializeBiomechanics(); // Initialize biomechanics
+  }
+
+  @override
+  void dispose() {
+    _dummyDataSubscription?.cancel();
+    _bleService.dispose();
+    super.dispose();
   }
 
   void setActivationKey(String key) {
@@ -30,49 +58,197 @@ class AppState extends ChangeNotifier {
   }
 
   void startConnection() {
-    if (_activationKey != null) {
-      _bleService.scanAndHandshake(_activationKey!);
+    if (_activationKey == null) {
+      // Set a default key if none exists (e.g., when bypassing ActivationScreen)
+      setActivationKey("LBPP-DEMO-KEY-2024");
     }
+    _bleService.scanAndHandshake(_activationKey!);
   }
 
   void disconnect() {
     _bleService.disconnect();
   }
 
+  // New methods for biomechanical features
+  void toggleDummyData() {
+    _useDummyData = !_useDummyData;
+    if (_useDummyData) {
+      _startDummyDataStream();
+    } else {
+      _stopDummyDataStream();
+    }
+    notifyListeners();
+  }
+
+  void toggleBiomechanics() {
+    _isBiomechanicsActive = !_isBiomechanicsActive;
+    if (_isBiomechanicsActive && _useDummyData) {
+      _startDummyDataStream();
+    }
+    notifyListeners();
+  }
+
+  void _initializeBiomechanics() {
+    // Start with dummy data
+    _currentSpineKinematics = _biomechanicalAnalyzer.generateDummyData();
+    _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(_currentSpineKinematics!);
+    _startDummyDataStream();
+  }
+
+  void _startDummyDataStream() {
+    _dummyDataSubscription?.cancel(); // Ensure no multiple subscriptions
+    _dummyDataSubscription = _bleService.getMockIMUData().listen((kinematics) {
+      if (!_useDummyData) return; // Only process if we are in dummy mode
+
+      _currentSpineKinematics = kinematics;
+      _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(kinematics);
+
+      // Add to history (keep last 100 readings)
+      _spineHistory.add(kinematics);
+      if (_spineHistory.length > 100) {
+        _spineHistory.removeAt(0);
+      }
+
+      notifyListeners();
+    });
+  }
+
+  void _stopDummyDataStream() {
+    _dummyDataSubscription?.cancel();
+    _dummyDataSubscription = null;
+  }
+
+  void _updateRealtimeKinematics(SpineKinematics kinematics) {
+    _currentSpineKinematics = kinematics;
+    _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(kinematics);
+
+    // Add to history
+    _spineHistory.add(kinematics);
+    if (_spineHistory.length > 100) {
+      _spineHistory.removeAt(0);
+    }
+
+    // Send to cloud if compression is high
+    if (kinematics.estimatedCompression > 70) {
+      _sendBiomechanicalAlert();
+    }
+
+    notifyListeners();
+  }
+
+  void _sendBiomechanicalAlert() {
+    if (_currentSpineKinematics != null) {
+      final alertData = {
+        'timestamp': DateTime.now().toIso8601String(),
+        'flexion': _currentSpineKinematics!.relativeFlexion,
+        'extension': _currentSpineKinematics!.relativeExtension,
+        'lateral_bend': _currentSpineKinematics!.relativeLateralBend,
+        'compression': _currentSpineKinematics!.estimatedCompression,
+        'warnings': _motionAnalysis['warnings'],
+        'danger': _motionAnalysis['danger'],
+      };
+
+      _cloudService.sendBiomechanicalAlert(alertData);
+    }
+  }
+
+  void clearBiomechanicsHistory() {
+    _spineHistory.clear();
+    notifyListeners();
+  }
+
+  List<Map<String, dynamic>> getBiomechanicsSummary() {
+    if (_spineHistory.isEmpty) return [];
+
+    final dangerousReadings = _spineHistory.where(
+            (k) => _biomechanicalAnalyzer.checkThresholds(k)['danger'].isNotEmpty
+    ).length;
+
+    final warningReadings = _spineHistory.where(
+            (k) => _biomechanicalAnalyzer.checkThresholds(k)['warnings'].isNotEmpty
+    ).length;
+
+    final avgFlexion = _spineHistory.map((k) => k.relativeFlexion).reduce((a, b) => a + b) / _spineHistory.length;
+    final avgCompression = _spineHistory.map((k) => k.estimatedCompression).reduce((a, b) => a + b) / _spineHistory.length;
+
+    return [
+      {'label': 'Total Readings', 'value': _spineHistory.length.toString()},
+      {'label': 'Dangerous Postures', 'value': dangerousReadings.toString()},
+      {'label': 'Warning Postures', 'value': warningReadings.toString()},
+      {'label': 'Avg. Flexion', 'value': '${avgFlexion.toStringAsFixed(1)}°'},
+      {'label': 'Avg. Compression', 'value': '${avgCompression.toStringAsFixed(1)}%'},
+    ];
+  }
+
   void _listenToBle() {
     // Listen to Status
     _bleService.statusStream.listen((status) {
       _connectionStatus = status;
+      
+      if (status == BleStatus.connected) {
+        _useDummyData = false; // Switch to real data when connected
+        _stopDummyDataStream(); // Stop dummy data
+      }
+      
       notifyListeners();
     });
 
-    // Listen to Data
+    // Listen to raw data (for legacy angle processing)
     _bleService.dataStream.listen((encryptedData) {
       if (encryptedData.isNotEmpty) {
         _processData(encryptedData);
       }
     });
+
+    // Listen to processed IMU Data (new)
+    _bleService.imuDataStream?.listen((imuData) {
+      if (!_useDummyData) {
+        // We are connected and receiving real data
+        _updateRealtimeKinematics(imuData);
+      }
+    });
   }
 
   void _processData(List<int> rawData) {
-    // Note: In a real scenario, extract IV from packet.
-    // Here we assume rawData is the payload for demo.
-    // var decrypted = _cryptoService.decryptPacket(Uint8List.fromList(rawData), myIV);
-
-    // Simulating parsing the angle from the decrypted bytes
-    // Assume first byte is integer angle for simplicity of this snippet
+    // This method handles the old angle-only data stream.
     if (rawData.isNotEmpty) {
-      // Updating angle for Real-time Visualization [cite: 200]
       _lumbarAngle = rawData[0].toDouble();
 
-      // Buffer for Cloud [cite: 203]
       _dataBuffer.add(_lumbarAngle);
       if (_dataBuffer.length > 50) {
         _cloudService.sendTelemetry(List.from(_dataBuffer));
         _dataBuffer.clear();
       }
-
       notifyListeners();
+    }
+  }
+
+  // Method to manually update kinematics (for testing)
+  void updateKinematicsManually(SpineKinematics kinematics) {
+    _currentSpineKinematics = kinematics;
+    _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(kinematics);
+    notifyListeners();
+  }
+
+  // Get color based on motion safety
+  Color getMotionSafetyColor() {
+    if (_motionAnalysis['danger']?.isNotEmpty == true) {
+      return Colors.red;
+    } else if (_motionAnalysis['warnings']?.isNotEmpty == true) {
+      return Colors.orange;
+    } else {
+      return Colors.green;
+    }
+  }
+
+  // Get safety status text
+  String getMotionSafetyText() {
+    if (_motionAnalysis['danger']?.isNotEmpty == true) {
+      return 'Dangerous Posture';
+    } else if (_motionAnalysis['warnings']?.isNotEmpty == true) {
+      return 'Warning - Check Posture';
+    } else {
+      return 'Safe Posture';
     }
   }
 }
