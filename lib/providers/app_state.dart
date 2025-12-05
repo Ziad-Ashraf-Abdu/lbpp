@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
+import 'package:encrypt/encrypt.dart';
 import '../services/ble_service.dart';
 import '../services/encryption_service.dart';
 import '../services/cloud_service.dart';
@@ -90,9 +91,14 @@ class AppState extends ChangeNotifier {
 
   void _initializeBiomechanics() {
     // Start with dummy data
-    _currentSpineKinematics = _biomechanicalAnalyzer.generateDummyData();
-    _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(_currentSpineKinematics!);
-    _startDummyDataStream();
+    if (_useDummyData) {
+      _currentSpineKinematics = _biomechanicalAnalyzer.generateDummyData();
+      _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(_currentSpineKinematics!);
+      _startDummyDataStream();
+    } else {
+      _currentSpineKinematics = null;
+      _motionAnalysis = {};
+    }
   }
 
   void _startDummyDataStream() {
@@ -188,38 +194,61 @@ class AppState extends ChangeNotifier {
       if (status == BleStatus.connected) {
         _useDummyData = false; // Switch to real data when connected
         _stopDummyDataStream(); // Stop dummy data
+        // Clear the screen to wait for real data
+        _currentSpineKinematics = null;
+      } else if (status == BleStatus.disconnected) {
+        _useDummyData = true;
+        _initializeBiomechanics();
       }
       
       notifyListeners();
     });
 
-    // Listen to raw data (for legacy angle processing)
+    // Listen to Data and DECRYPT IT
     _bleService.dataStream.listen((encryptedData) {
-      if (encryptedData.isNotEmpty) {
-        _processData(encryptedData);
-      }
-    });
-
-    // Listen to processed IMU Data (new)
-    _bleService.imuDataStream?.listen((imuData) {
-      if (!_useDummyData) {
-        // We are connected and receiving real data
-        _updateRealtimeKinematics(imuData);
+      if (encryptedData.isNotEmpty && !_useDummyData) {
+        // 1. DECRYPT THE DATA using the updated service
+        final decryptedData = _cryptoService.decrypt(Encrypted(Uint8List.fromList(encryptedData)));
+        
+        // 2. PROCESS THE DECRYPTED STRING
+        if (decryptedData.isNotEmpty) {
+          _processData(decryptedData);
+        }
       }
     });
   }
 
-  void _processData(List<int> rawData) {
-    // This method handles the old angle-only data stream.
-    if (rawData.isNotEmpty) {
-      _lumbarAngle = rawData[0].toDouble();
+  void _processData(String dataString) {
+    try {
+      final parts = dataString.trim().split(',');
 
-      _dataBuffer.add(_lumbarAngle);
-      if (_dataBuffer.length > 50) {
-        _cloudService.sendTelemetry(List.from(_dataBuffer));
-        _dataBuffer.clear();
+      if (parts.length >= 6) {
+        final upperPitch = double.tryParse(parts[0]) ?? 0.0;
+        final upperRoll = double.tryParse(parts[1]) ?? 0.0;
+        final upperYaw = double.tryParse(parts[2]) ?? 0.0;
+        final lowerPitch = double.tryParse(parts[3]) ?? 0.0;
+        final lowerRoll = double.tryParse(parts[4]) ?? 0.0;
+        final lowerYaw = double.tryParse(parts[5]) ?? 0.0;
+
+        final upperIMU = IMUSensorData(
+          sensorId: 'upper',
+          timestamp: DateTime.now(),
+          pitch: upperPitch, roll: upperRoll, yaw: upperYaw,
+          accelX: 0.0, accelY: 0.0, accelZ: 9.8, 
+        );
+
+        final lowerIMU = IMUSensorData(
+          sensorId: 'lower',
+          timestamp: DateTime.now(),
+          pitch: lowerPitch, roll: lowerRoll, yaw: lowerYaw,
+          accelX: 0.0, accelY: 0.0, accelZ: 9.8, 
+        );
+
+        final kinematics = _biomechanicalAnalyzer.calculateKinematics(upperIMU, lowerIMU);
+        _updateRealtimeKinematics(kinematics);
       }
-      notifyListeners();
+    } catch (e) {
+      debugPrint("Error processing decrypted data: $e");
     }
   }
 
