@@ -19,14 +19,31 @@ class EncryptionService {
   // Decrypts a packet using the internally managed, auto-incrementing IV
   String decrypt(Encrypted encryptedData) {
     try {
-      // The decrypt function in the library automatically uses and increments
-      // the IV for CTR mode when the same IV instance is passed. 
-      // This mimics the mbedtls_aes_crypt_ctr behavior.
+      // The decrypt function uses the current IV state
       final decrypted = _encrypter.decrypt(encryptedData, iv: _iv);
+      
+      // MANUALLY INCREMENT THE IV for the next packet to match the ESP32
+      _incrementIV();
+      
       return decrypted;
     } catch (e) {
-      print("Decryption Error: $e");
+      print("Decryption Error: $e. This may happen if packets are out of order.");
+      // On error, we might be out of sync. Consider resetting the IV or connection.
       return ""; // Return empty string on error
+    }
+  }
+  
+  /// Increments the 128-bit IV counter for AES-CTR mode.
+  /// This must match the encryption-side logic.
+  void _incrementIV() {
+    final bytes = _iv.bytes;
+    for (int i = bytes.length - 1; i >= 0; i--) {
+        // Increment the byte
+        bytes[i]++;
+        // If the byte has not overflowed (wrapped to 0), we are done.
+        if (bytes[i] != 0) {
+            break;
+        }
     }
   }
 

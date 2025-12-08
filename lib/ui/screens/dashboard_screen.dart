@@ -28,7 +28,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final state = Provider.of<AppState>(context);
     
     // USE THE LIVE DATA FROM STATE, NOT LOCAL DUMMY DATA
-    // Fallback to generating one frame if state is null (e.g. startup)
     final displayData = state.currentSpineKinematics ?? _analyzer.generateDummyData();
 
     return Scaffold(
@@ -52,66 +51,82 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          children: [
-            // Status Card
-            _buildConnectionCard(state),
-            const SizedBox(height: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 16.0), // Consistent horizontal padding
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Use a SingleChildScrollView to prevent vertical overflow
+            return SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight( // Ensures Column children can use Expanded
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 16),
+                      // Status Card
+                      _buildConnectionCard(state),
+                      const SizedBox(height: 16),
 
-            // Biomechanics Data Card
-            _buildBiomechanicsCard(displayData),
-            const SizedBox(height: 20),
+                      // Biomechanics Data Card
+                      _buildBiomechanicsCard(displayData),
+                      const SizedBox(height: 16),
 
-            // Spine 3D Visualization - MAIN FOCUS AREA
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E1E1E),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white10),
-                ),
-                child: Spine3DVisualizer(
-                  kinematics: displayData,
-                  width: MediaQuery.of(context).size.width - 40,
-                  height: double.infinity,
+                      // Spine 3D Visualization - MAIN FOCUS AREA
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E1E1E),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: Spine3DVisualizer(
+                            kinematics: displayData,
+                            // Width and height are now managed by parent
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Motion Analysis Section
+                      _buildMotionAnalysisSection(displayData),
+                      const SizedBox(height: 16),
+
+                      // Connect Button (fixed at bottom if not connected)
+                      if (!state.isConnected)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: ElevatedButton.icon(
+                            icon: state.connectionStatus == BleStatus.scanning
+                                ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                                : Icon(state.connectionStatus == BleStatus.error ? Icons.refresh : Icons.bluetooth_searching),
+                            label: Text(state.connectionStatus == BleStatus.scanning
+                                ? "Scanning..."
+                                : state.connectionStatus == BleStatus.error
+                                ? "Scan Failed - Retry"
+                                : "Connect to Device"),
+                            onPressed: (state.connectionStatus == BleStatus.disconnected ||
+                                state.connectionStatus == BleStatus.error)
+                                ? () => state.startConnection()
+                                : null,
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 50),
+                              backgroundColor: state.connectionStatus == BleStatus.error
+                                  ? Colors.redAccent
+                                  : Colors.blue,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-
-            // Motion Analysis Section
-            _buildMotionAnalysisSection(displayData),
-            const SizedBox(height: 20),
-
-            // Connect Button
-            if (!state.isConnected)
-              ElevatedButton.icon(
-                icon: state.connectionStatus == BleStatus.scanning
-                    ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Icon(Icons.search, size: 16),
-                )
-                    : Icon(state.connectionStatus == BleStatus.error ? Icons.refresh : Icons.search),
-                label: Text(state.connectionStatus == BleStatus.scanning
-                    ? "Scanning..."
-                    : state.connectionStatus == BleStatus.error
-                    ? "Scan Failed - Retry"
-                    : "Connect to Device"),
-                onPressed: (state.connectionStatus == BleStatus.disconnected ||
-                    state.connectionStatus == BleStatus.error)
-                    ? () => state.startConnection()
-                    : null,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 50),
-                  backgroundColor: state.connectionStatus == BleStatus.error
-                      ? Colors.redAccent
-                      : Colors.blue,
-                  foregroundColor: Colors.white,
-                ),
-              ),
-          ],
+            );
+          },
         ),
       ),
     );
