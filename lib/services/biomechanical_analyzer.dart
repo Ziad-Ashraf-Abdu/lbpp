@@ -1,38 +1,52 @@
+// lib/services/biomechanical_analyzer.dart
+
 import 'package:vector_math/vector_math.dart';
 import '../models/biomechanical_data.dart';
+import '../utils/moving_average.dart'; // Import the new utility
 
 class BiomechanicalAnalyzer {
+  // Create instances of the moving average filter for each kinematic value
+  final _flexionSmoother = MovingAverage(windowSize: 10);
+  final _extensionSmoother = MovingAverage(windowSize: 10);
+  final _lateralBendSmoother = MovingAverage(windowSize: 10);
+  final _rotationSmoother = MovingAverage(windowSize: 10);
+  final _compressionSmoother = MovingAverage(windowSize: 10);
 
-  /// Calculate relative angles between two IMUs
+
+  /// Calculate relative angles between two IMUs, now with smoothing
   SpineKinematics calculateKinematics(
       IMUSensorData upper,
       IMUSensorData lower,
       ) {
-    // Calculate relative angles (using vector math)
-    final relativeFlexion = upper.pitch - lower.pitch;
-    final relativeExtension = -(upper.pitch - lower.pitch); // Invert for extension
+    // --- Step 1: Calculate raw relative angles ---
+    final rawRelativeFlexion = upper.pitch - lower.pitch;
+    final rawRelativeExtension = -(upper.pitch - lower.pitch);
+    final rawRelativeLateralBend = upper.roll - lower.roll;
+    final rawRelativeRotation = upper.yaw - lower.yaw;
+    final rawCompression = _estimateCompression(upper, lower);
+    final normalizedRotation = _normalizeAngle(rawRelativeRotation);
 
-    final relativeLateralBend = upper.roll - lower.roll;
-    final relativeRotation = upper.yaw - lower.yaw;
+    // --- Step 2: Pass raw values through the smoothing filters ---
+    final smoothFlexion = _flexionSmoother.add(rawRelativeFlexion > 0 ? rawRelativeFlexion : 0);
+    final smoothExtension = _extensionSmoother.add(rawRelativeExtension > 0 ? rawRelativeExtension : 0);
+    final smoothLateralBend = _lateralBendSmoother.add(rawRelativeLateralBend.abs());
+    final smoothRotation = _rotationSmoother.add(normalizedRotation.abs());
+    final smoothCompression = _compressionSmoother.add(rawCompression);
 
-    // Normalize rotation to -180 to 180 degrees
-    final normalizedRotation = _normalizeAngle(relativeRotation);
-
-    // Estimate compression from vertical acceleration difference
-    final compression = _estimateCompression(upper, lower);
-
+    // --- Step 3: Return kinematics object with smoothed data ---
     return SpineKinematics(
       upperSensor: upper,
       lowerSensor: lower,
       timestamp: DateTime.now(),
-      relativeFlexion: relativeFlexion > 0 ? relativeFlexion : 0,
-      relativeExtension: relativeExtension > 0 ? relativeExtension : 0,
-      relativeLateralBend: relativeLateralBend.abs(),
-      relativeRotation: normalizedRotation.abs(),
-      estimatedCompression: compression,
+      relativeFlexion: smoothFlexion,
+      relativeExtension: smoothExtension,
+      relativeLateralBend: smoothLateralBend,
+      relativeRotation: smoothRotation,
+      estimatedCompression: smoothCompression,
     );
   }
 
+  // ... (rest of the file remains the same: _normalizeAngle, _estimateCompression, checkThresholds, etc.)
   /// Normalize angle to -180 to 180 degrees
   double _normalizeAngle(double angle) {
     angle %= 360;
@@ -43,11 +57,7 @@ class BiomechanicalAnalyzer {
 
   /// Estimate spinal compression from acceleration data
   double _estimateCompression(IMUSensorData upper, IMUSensorData lower) {
-    // Simple model: Compression correlates with vertical acceleration difference
-    // In real implementation, this would use more sophisticated biomechanical model
     final verticalAccelDiff = (upper.accelZ - lower.accelZ).abs();
-
-    // Normalize to 0-100% scale (dummy calculation - needs calibration)
     final compression = (verticalAccelDiff * 10).clamp(0.0, 100.0);
     return compression;
   }
@@ -57,7 +67,6 @@ class BiomechanicalAnalyzer {
     final warnings = <String>[];
     final danger = <String>[];
 
-    // Check flexion
     if (kinematics.relativeFlexion > MotionThresholds.maxSafeFlexion * 0.8) {
       warnings.add('High flexion detected');
     }
@@ -65,7 +74,6 @@ class BiomechanicalAnalyzer {
       danger.add('Dangerous flexion level!');
     }
 
-    // Check extension
     if (kinematics.relativeExtension > MotionThresholds.maxSafeExtension * 0.8) {
       warnings.add('High extension detected');
     }
@@ -73,7 +81,6 @@ class BiomechanicalAnalyzer {
       danger.add('Dangerous extension level!');
     }
 
-    // Check lateral bending
     if (kinematics.relativeLateralBend > MotionThresholds.maxSafeLateralBend * 0.8) {
       warnings.add('High lateral bending detected');
     }
@@ -81,16 +88,13 @@ class BiomechanicalAnalyzer {
       danger.add('Dangerous lateral bending!');
     }
 
-    // ✅ ADD ROTATION CHECKS - RIGHT HERE:
-    // Check rotation (twist)
-    if (kinematics.relativeRotation > 10.0) { // Warning threshold
+    if (kinematics.relativeRotation > 10.0) {
       warnings.add('High rotation detected: ${kinematics.relativeRotation.toStringAsFixed(1)}°');
     }
-    if (kinematics.relativeRotation > 15.0) { // Danger threshold
+    if (kinematics.relativeRotation > 15.0) {
       danger.add('Dangerous rotation level: ${kinematics.relativeRotation.toStringAsFixed(1)}°');
     }
 
-    // Check compression
     if (kinematics.estimatedCompression > MotionThresholds.warningCompression) {
       warnings.add('High spinal compression');
     }
@@ -105,63 +109,11 @@ class BiomechanicalAnalyzer {
     };
   }
 
-  /// Generate dummy data for testing (matching IMU data structure)
   SpineKinematics generateDummyData() {
     final now = DateTime.now();
-
-    // Simulate normal standing posture with slight rotation
-    final upperSensor = IMUSensorData(
-      sensorId: 'upper',
-      timestamp: now,
-      pitch: 5.0,    // Slight forward tilt
-      roll: 2.0,     // Slight right tilt
-      yaw: 3.0,      // ✅ ADDED: Slight right rotation
-      accelX: 0.1,
-      accelY: 0.0,
-      accelZ: 9.8,   // Gravity
-    );
-
-    final lowerSensor = IMUSensorData(
-      sensorId: 'lower',
-      timestamp: now,
-      pitch: 0.0,    // Reference (vertical)
-      roll: 0.0,     // Reference
-      yaw: 0.0,      // Reference
-      accelX: 0.0,
-      accelY: 0.0,
-      accelZ: 9.8,
-    );
-
-    return calculateKinematics(upperSensor, lowerSensor);
-  }
-
-  /// Generate dummy data with variations for testing
-  SpineKinematics generateVaryingDummyData(int count) {
-    final now = DateTime.now();
-
-    // Create varying data based on count
-    final upperSensor = IMUSensorData(
-      sensorId: 'upper',
-      timestamp: now,
-      pitch: 5.0 + (count % 20).toDouble() * 0.5, // Vary between 5-15°
-      roll: 2.0 + (count % 10).toDouble() * 0.3,  // Vary between 2-5°
-      yaw: 3.0 + (count % 15).toDouble() * 0.2,   // ✅ ADDED: Vary rotation 3-6°
-      accelX: 0.1,
-      accelY: 0.0,
-      accelZ: 9.8,
-    );
-
-    final lowerSensor = IMUSensorData(
-      sensorId: 'lower',
-      timestamp: now,
-      pitch: 0.0,
-      roll: 0.0,
-      yaw: 0.0,
-      accelX: 0.0,
-      accelY: 0.0,
-      accelZ: 9.8,
-    );
-
+    final upperSensor = IMUSensorData(sensorId: 'upper', timestamp: now, pitch: 5.0, roll: 2.0, yaw: 3.0, accelX: 0.1, accelY: 0.0, accelZ: 9.8);
+    final lowerSensor = IMUSensorData(sensorId: 'lower', timestamp: now, pitch: 0.0, roll: 0.0, yaw: 0.0, accelX: 0.0, accelY: 0.0, accelZ: 9.8);
     return calculateKinematics(upperSensor, lowerSensor);
   }
 }
+
