@@ -1,60 +1,81 @@
-import 'package:encrypt/encrypt.dart';
+import 'package:encrypt/encrypt.dart' as enc;
 import 'dart:typed_data';
+import 'dart:convert'; // For utf8.decode
+import 'package:flutter/foundation.dart'; // For debugPrint
 
 class EncryptionService {
-  late Encrypter _encrypter;
-  late IV _iv;
+  late enc.Encrypter _encrypter;
+  late Uint8List _ivBytes; // This will hold the mutable IV counter state
 
-  // Initialize with the User's Activation Key and a zeroed IV
   void init(String activationKey) {
-    // Ensure key is 128-bit (16 bytes)
     final keyString = activationKey.padRight(16, '0').substring(0, 16);
-    final key = Key.fromUtf8(keyString);
-    _encrypter = Encrypter(AES(key, mode: AESMode.ctr, padding: null));
+    final key = enc.Key.fromUtf8(keyString);
     
-    // Initialize IV with all zeros, same as the ESP32
-    _iv = IV(Uint8List(16));
+    _encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.ctr, padding: null));
+    
+    _ivBytes = Uint8List(16); // All zeros
+    debugPrint("[EncryptionService] Initialized. Key and IV are set.");
   }
 
-  // Decrypts a packet using the internally managed, auto-incrementing IV
-  String decrypt(Encrypted encryptedData) {
-    try {
-      // The decrypt function uses the current IV state
-      final decrypted = _encrypter.decrypt(encryptedData, iv: _iv);
-      
-      // MANUALLY INCREMENT THE IV for the next packet to match the ESP32
-      _incrementIV();
-      
-      return decrypted;
-    } catch (e) {
-      print("Decryption Error: $e. This may happen if packets are out of order.");
-      // On error, we might be out of sync. Consider resetting the IV or connection.
-      return ""; // Return empty string on error
+  /// Decrypts an entire data packet received from the ESP32.
+  /// This method mimics the mbedtls_aes_crypt_ctr behavior by advancing the
+  /// IV based on the number of 16-byte blocks the packet occupies.
+  String decrypt(Uint8List encryptedPacket) {
+    if (encryptedPacket.isEmpty) {
+      return "";
     }
+
+    final currentIv = enc.IV(_ivBytes);
+    String decryptedText = "";
+
+    try {
+      debugPrint("[EncryptionService] Decrypting packet (${encryptedPacket.length} bytes) with IV: $_ivBytes");
+
+      // Decrypt the entire packet.
+      final decryptedBytes = _encrypter.decryptBytes(enc.Encrypted(encryptedPacket), iv: currentIv);
+      
+      // The ESP32 sends a CSV string. It might not be null-terminated.
+      // We decode it as UTF-8. Using allowMalformed helps prevent errors if a
+      // multi-byte character is split across packets, though with CSV this is unlikely.
+      decryptedText = utf8.decode(decryptedBytes, allowMalformed: true);
+      
+      debugPrint("[EncryptionService] Decryption successful. Plaintext: \"$decryptedText\"");
+
+    } catch (e) {
+      debugPrint("[EncryptionService] DECRYPTION FAILED: $e. The packet might be corrupted or the IV is out of sync.");
+      // We still advance the IV to try and re-sync with the next packet.
+      decryptedText = ""; 
+    } finally {
+      // CRITICAL: Advance the IV by the number of blocks used for this packet,
+      // regardless of whether decryption succeeded. This is how we stay in sync.
+      int numBlocks = (encryptedPacket.length + 15) ~/ 16;
+      _advanceIV(numBlocks);
+      debugPrint("[EncryptionService] Advanced IV by $numBlocks blocks. Next packet will use IV: $_ivBytes");
+    }
+    
+    return decryptedText;
   }
   
-  /// Increments the 128-bit IV counter for AES-CTR mode.
-  /// This must match the encryption-side logic.
-  void _incrementIV() {
-    final bytes = _iv.bytes;
-    for (int i = bytes.length - 1; i >= 0; i--) {
-        // Increment the byte
-        bytes[i]++;
-        // If the byte has not overflowed (wrapped to 0), we are done.
-        if (bytes[i] != 0) {
-            break;
-        }
-    }
-  }
+  /// Advances the 128-bit IV counter by a given number of steps.
+  void _advanceIV(int numBlocks) {
+    if (numBlocks <= 0) return;
 
-  // Legacy function - kept for reference but should not be used for streaming
-  List<int> decryptPacket(Uint8List encryptedData, Uint8List ivBytes) {
-    try {
-      final iv = IV(ivBytes);
-      return _encrypter.decryptBytes(Encrypted(encryptedData), iv: iv);
-    } catch (e) {
-      print("Decryption Error: $e");
-      return [];
+    // The IV is treated as a 128-bit big-endian integer for the addition.
+    var ivBigInt = BigInt.from(0);
+    for (int i = 0; i < 16; i++) {
+      ivBigInt = (ivBigInt << 8) | BigInt.from(_ivBytes[i]);
+    }
+
+    // Add the number of blocks.
+    ivBigInt += BigInt.from(numBlocks);
+
+    // Convert back to a 16-byte array, handling wrap-around.
+    final maxIv = BigInt.one << 128;
+    ivBigInt = ivBigInt % maxIv;
+
+    for (int i = 15; i >= 0; i--) {
+      _ivBytes[i] = (ivBigInt & BigInt.from(0xFF)).toInt();
+      ivBigInt = ivBigInt >> 8;
     }
   }
 }
