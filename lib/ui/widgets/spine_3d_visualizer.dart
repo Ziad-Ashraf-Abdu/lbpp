@@ -75,7 +75,8 @@ class Spine3DVisualizer extends StatelessWidget {
               ),
               if (kinematics != null)
                 Positioned(
-                  bottom: 20,
+                  // 1. INCREASED POSITION FROM TOP (20 -> 50)
+                  bottom: 0,
                   left: 0,
                   right: 0,
                   child: _buildDataOverlay(kinematics),
@@ -106,34 +107,33 @@ class Spine3DVisualizer extends StatelessWidget {
     final analysis = analyzer.checkThresholds(kinematics);
 
     return Container(
-      margin: const EdgeInsets.all(10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.8),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white12),
-      ),
+      margin: const EdgeInsets.all(2),
+      padding: const EdgeInsets.all(2),
+      // decoration: BoxDecoration(
+      //   // 2. INCREASED OPACITY (0.8 -> 0.95)
+      //   color: Colors.black.withOpacity(0.95),
+      //   borderRadius: BorderRadius.circular(12),
+      //   border: Border.all(color: Colors.white12),
+      // ),
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _buildSensorDot('T12/L1', Colors.blue),
-              const SizedBox(width: 20),
-              _buildSensorDot('L4/L5', Colors.green),
+
             ],
           ),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildMotionIndicator('Flexion', kinematics.relativeFlexion, 60.0),
-              _buildMotionIndicator('Ext', kinematics.relativeExtension, 30.0),
-              _buildMotionIndicator('Bend', kinematics.relativeLateralBend, 30.0, isDirectional: true),
-              _buildMotionIndicator('Rot', kinematics.relativeRotation, 30.0, isDirectional: true),
-              _buildMotionIndicator('Comp', kinematics.estimatedCompression, 100.0),
-            ],
-          ),
+          // Row(
+          //   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          //   children: [
+          //     _buildMotionIndicator('Flexion', kinematics.relativeFlexion, 60.0),
+          //     _buildMotionIndicator('Ext', kinematics.relativeExtension, 30.0),
+          //     _buildMotionIndicator('Bend', kinematics.relativeLateralBend, 30.0, isDirectional: true),
+          //     _buildMotionIndicator('Rot', kinematics.relativeRotation, 30.0, isDirectional: true),
+          //     _buildMotionIndicator('Comp', kinematics.estimatedCompression, 100.0),
+          //   ],
+          // ),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -244,7 +244,7 @@ class _GridPainter extends CustomPainter {
     for (double i = 0; i <= size.height; i += 40) {
       canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
     }
-    
+
     // Center line
     paint.color = Colors.white.withOpacity(0.1);
     canvas.drawLine(Offset(size.width/2, 0), Offset(size.width/2, size.height), paint);
@@ -275,50 +275,50 @@ class _SideViewPainter extends CustomPainter {
     double flexion = kinematics?.relativeFlexion ?? 0;
     double extension = kinematics?.relativeExtension ?? 0;
     double angleDegrees = flexion - extension;
-    
+
     // Convert to radians
     double radians = angleDegrees * (pi / 180.0);
-    
+
     // Base (Pelvis)
     canvas.drawLine(Offset(centerX - 10, bottomY), Offset(centerX + 10, bottomY), paint);
-    
+
     // Spine Curve
     final path = Path();
     path.moveTo(centerX, bottomY);
-    
+
     double spineLength = size.height * 0.6;
-    
+
     // Top point (Head position) based on angle
     // x = sin(angle)
     // y = cos(angle) up
     double topX = centerX + (spineLength * sin(radians));
     double topY = bottomY - (spineLength * cos(radians));
-    
+
     // Control point to make it curved, not stick
     double controlX = centerX + (spineLength * 0.5 * sin(radians * 0.5));
     double controlY = bottomY - (spineLength * 0.5 * cos(radians * 0.5));
 
     path.quadraticBezierTo(controlX, controlY, topX, topY);
     canvas.drawPath(path, paint);
-    
+
     // Head
     canvas.drawCircle(Offset(topX, topY), 5, Paint()..color = Colors.white..style = PaintingStyle.fill);
-    
+
     // Direction Indicator (Nose pointing Right)
     // Rotated by the spine angle
     canvas.drawLine(
-        Offset(topX, topY), 
-        Offset(topX + 8 * cos(radians), topY + 8 * sin(radians)), 
+        Offset(topX, topY),
+        Offset(topX + 8 * cos(radians), topY + 8 * sin(radians)),
         Paint()..color = Colors.white..strokeWidth = 1.5
     );
-    
+
     // Labels
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
-    
+
     textPainter.text = TextSpan(text: "Fwd", style: TextStyle(color: Colors.blue.withOpacity(0.5), fontSize: 8));
     textPainter.layout();
     textPainter.paint(canvas, Offset(size.width - 25, size.height / 2));
-    
+
     textPainter.text = TextSpan(text: "Back", style: TextStyle(color: Colors.orange.withOpacity(0.5), fontSize: 8));
     textPainter.layout();
     textPainter.paint(canvas, Offset(2, size.height / 2));
@@ -338,7 +338,7 @@ class _RealisticSpinePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final centerX = size.width / 2;
     final bottomY = size.height * 0.85;
-    
+
     // Kinematic values (default to 0 if null)
     double flexion = kinematics?.relativeFlexion ?? 0;
     double extension = kinematics?.relativeExtension ?? 0;
@@ -350,7 +350,7 @@ class _RealisticSpinePainter extends CustomPainter {
     // Lateral Bend: Shift X coordinate
     // Rotation: Rotate the individual vertebrae rectangles
     // Flexion/Extension: Compress vertical space (perspective) + slight X/Y shift for curvature
-    
+
     // Draw Sacrum (Base)
     _drawSacrum(canvas, centerX, bottomY);
 
@@ -358,38 +358,38 @@ class _RealisticSpinePainter extends CustomPainter {
     // We accumulate offsets as we go up
     double currentY = bottomY - 20; // Start above sacrum
     double currentX = centerX;
-    
+
     // Height of one functional spinal unit (vertebra + disc)
     // Compress if compression value is high
-    double unitHeight = 45.0 * (1.0 - (compression / 200.0).clamp(0.0, 0.2)); 
+    double unitHeight = 45.0 * (1.0 - (compression / 200.0).clamp(0.0, 0.2));
 
     for (int i = 5; i >= 1; i--) {
       // Calculate cumulative bend at this level
       // Lower vertebrae (L5, L4) move less than upper ones (L1, L2)
       double levelFactor = (6 - i) / 5.0; // 0.2 for L5, 1.0 for L1
-      
+
       // Lateral curve offset
       // Exaggerated multiplier for visibility
-      double xOffset = lateralBend * 3.0 * levelFactor; 
-      
+      double xOffset = lateralBend * 3.0 * levelFactor;
+
       // Rotation at this level
       // Cumulative rotation: L5 rotates a little, L1 rotates the full amount
       double levelRotation = rotation * levelFactor;
 
       // Flexion effect: Forward bend "arches" the spine
-      // In 2D posterior view, flexion often looks like vertical compression 
+      // In 2D posterior view, flexion often looks like vertical compression
       // or a slight vertical curve if we assume perspective.
       // We'll simulate flexion by spacing them closer (looking down)
       double ySpacing = unitHeight * (1.0 - (flexion.abs() / 150.0));
-      
+
       // Calculate position for this vertebra
       // Using a slight quadratic curve for natural bending
       double bendCurve = pow(levelFactor, 1.5).toDouble();
       double drawX = centerX + (lateralBend * 4.0 * bendCurve);
-      
+
       // Draw Disc below (except for L5 which sits on sacrum)
       if (i < 5) {
-          _drawDisc(canvas, drawX, currentY + (unitHeight/2), levelRotation);
+        _drawDisc(canvas, drawX, currentY + (unitHeight/2), levelRotation);
       }
 
       // Draw Vertebra
@@ -417,19 +417,19 @@ class _RealisticSpinePainter extends CustomPainter {
     path.close();
 
     canvas.drawPath(path, paint);
-    
+
     // Detail lines
     final detailPaint = Paint()
       ..color = Colors.black26
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
-      
+
     canvas.drawPath(path, detailPaint);
   }
 
   void _drawVertebra(Canvas canvas, double x, double y, int level, double rotationDegrees, double flexion, double extension) {
     // L1 is smaller than L5 naturally
-    double widthBase = 60.0 + (level * 2.0); 
+    double widthBase = 60.0 + (level * 2.0);
     double heightBase = 35.0;
 
     // Perspective transformation for Rotation
@@ -437,14 +437,14 @@ class _RealisticSpinePainter extends CustomPainter {
     double radians = rotationDegrees * vector.degrees2Radians;
     double visibleWidth = widthBase * cos(radians).abs();
     if (visibleWidth < 20) visibleWidth = 20; // Min width
-    
+
     // Perspective for Flexion/Extension (Tilting)
     // Extension (leaning back) -> we see more of the "top" or front, looks taller?
     // Flexion (leaning forward) -> we see more of the "back", spinous process moves up?
     // Simplified: Flexion makes the body look slightly compressed vertically in this view
-    
+
     final rect = Rect.fromCenter(center: Offset(x, y), width: visibleWidth, height: heightBase);
-    
+
     // Body Paint (Bone color)
     final paint = Paint()
       ..shader = LinearGradient(
@@ -457,7 +457,7 @@ class _RealisticSpinePainter extends CustomPainter {
     // Draw vertebral body (Main block)
     RRect rRect = RRect.fromRectAndRadius(rect, const Radius.circular(8));
     canvas.drawRRect(rRect, paint);
-    
+
     // Outline
     canvas.drawRRect(rRect, Paint()..color = Colors.black45..style = PaintingStyle.stroke..strokeWidth = 1.5);
 
@@ -465,14 +465,14 @@ class _RealisticSpinePainter extends CustomPainter {
     // This is crucial for visualizing rotation.
     // If rotated Left, spinous process moves Right.
     // If rotated Right, spinous process moves Left.
-    
+
     // Calculate offset of spinous process based on rotation
     // The "back" moves opposite to the "front" face rotation
-    double processOffset = -1.0 * (widthBase * 0.4) * sin(radians); 
-    
+    double processOffset = -1.0 * (widthBase * 0.4) * sin(radians);
+
     double processX = x + processOffset;
     double processY = y; // Centered vertically usually
-    
+
     // Draw Pedicles (connections)
     canvas.drawLine(Offset(x - visibleWidth/4, y), Offset(processX, processY), Paint()..color=Colors.grey[500]!..strokeWidth=4);
     canvas.drawLine(Offset(x + visibleWidth/4, y), Offset(processX, processY), Paint()..color=Colors.grey[500]!..strokeWidth=4);
@@ -482,7 +482,7 @@ class _RealisticSpinePainter extends CustomPainter {
     final processPaint = Paint()..color = Colors.grey[300]!;
     canvas.drawOval(processRect, processPaint);
     canvas.drawOval(processRect, Paint()..color=Colors.black38..style=PaintingStyle.stroke..strokeWidth=1);
-    
+
     // Label (L1, L2, etc.)
     // Draw text next to the vertebra so it doesn't get obscured by rotation
     TextPainter textPainter = TextPainter(
@@ -494,12 +494,12 @@ class _RealisticSpinePainter extends CustomPainter {
     );
     textPainter.layout();
     textPainter.paint(canvas, Offset(x - visibleWidth/2 - 25, y - 6));
-    
+
     // Visual cue for "Twist" direction
     if (rotationDegrees.abs() > 5) {
-        // Draw a small arrow near the process indicating movement
-        Paint arrowPaint = Paint()..color = rotationDegrees > 0 ? Colors.redAccent : Colors.blueAccent ..style=PaintingStyle.stroke..strokeWidth=2;
-        // Simplified visual cue
+      // Draw a small arrow near the process indicating movement
+      Paint arrowPaint = Paint()..color = rotationDegrees > 0 ? Colors.redAccent : Colors.blueAccent ..style=PaintingStyle.stroke..strokeWidth=2;
+      // Simplified visual cue
     }
   }
 
@@ -507,9 +507,9 @@ class _RealisticSpinePainter extends CustomPainter {
     // Disc is smaller, bluish/cartilage color
     double width = 50.0 * cos(rotation * vector.degrees2Radians).abs();
     if (width < 15) width = 15;
-    
+
     final rect = Rect.fromCenter(center: Offset(x, y), width: width, height: 12);
-    
+
     final paint = Paint()
       ..color = const Color(0xFF90CAF9).withOpacity(0.6); // Light Blue transparent
 
