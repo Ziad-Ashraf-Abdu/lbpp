@@ -23,8 +23,9 @@ class BleService {
 
   // --- CONFIGURATION ---
   static const bool isSimulation = false; // Set to FALSE for real hardware connection
+  static const String targetDeviceName = "ESP32_Smart_Spine"; // Device name to search for
 
-  /// Starts scanning for the specific ESP32 service
+  /// Starts scanning for the specific ESP32 device by name
   Future<void> scanAndHandshake(String activationKey) async {
     if (isSimulation) {
       print("[BLE] Simulation Mode Active");
@@ -32,7 +33,7 @@ class BleService {
       return;
     }
 
-    print("[BLE] Starting Scan for Service: ${AppConstants.NUS_SERVICE_UUID}");
+    print("[BLE] Starting Scan for Device: $targetDeviceName");
     _statusController.add(BleStatus.scanning);
 
     try {
@@ -42,23 +43,26 @@ class BleService {
         return;
       }
 
+      // Start scan WITHOUT service filter to find device by name
       await FlutterBluePlus.startScan(
-          withServices: [Guid(AppConstants.NUS_SERVICE_UUID)],
-          timeout: const Duration(seconds: 10));
+          timeout: const Duration(seconds: 50));
 
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) async {
-        if (results.isNotEmpty) {
-          ScanResult r = results.first;
-          print("[BLE] Found Device: ${r.device.platformName} (${r.device.remoteId})");
-          await FlutterBluePlus.stopScan();
-          _scanSubscription?.cancel();
-          await _attemptConnection(r.device, activationKey);
+        for (ScanResult r in results) {
+          // Check if device name matches
+          if (r.device.platformName == targetDeviceName) {
+            print("[BLE] Found Device: ${r.device.platformName} (${r.device.remoteId})");
+            await FlutterBluePlus.stopScan();
+            _scanSubscription?.cancel();
+            await _attemptConnection(r.device, activationKey);
+            return; // Exit after finding the first match
+          }
         }
       });
 
       Future.delayed(const Duration(milliseconds: 10500), () {
         if (_connectedDevice == null) {
-          print("[BLE] Scan Timeout: No devices found with UUID ${AppConstants.NUS_SERVICE_UUID}");
+          print("[BLE] Scan Timeout: No devices found with name '$targetDeviceName'");
           _statusController.add(BleStatus.error);
         }
       });
@@ -84,9 +88,9 @@ class BleService {
       );
 
       _rxCharacteristic = service.characteristics.firstWhere(
-            (c) => c.uuid.toString().toUpperCase() == AppConstants.RX_CHARACTERISTIC_UUID);
+              (c) => c.uuid.toString().toUpperCase() == AppConstants.RX_CHARACTERISTIC_UUID);
       _txCharacteristic = service.characteristics.firstWhere(
-            (c) => c.uuid.toString().toUpperCase() == AppConstants.TX_CHARACTERISTIC_UUID);
+              (c) => c.uuid.toString().toUpperCase() == AppConstants.TX_CHARACTERISTIC_UUID);
 
       // --- HANDSHAKE PROTOCOL (RESTORED) ---
       _statusController.add(BleStatus.handshake);
