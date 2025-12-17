@@ -17,13 +17,21 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProviderStateMixin {
   late BiomechanicalAnalyzer _analyzer;
+  late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
     _analyzer = BiomechanicalAnalyzer();
+    _tabController = TabController(length: 2, vsync: this, initialIndex: 1);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   @override
@@ -92,6 +100,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _buildConnectionCard(state),
                   const SizedBox(height: 24),
 
+                  if (!state.isConnected) ...[
+                    // Loading View (Compact)
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          CircularProgressIndicator(),
+                          SizedBox(height: 16),
+                          Text(
+                            'Waiting for device connection...',
+                            style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+
                   if (state.isConnected) ...[
                     // Real-time Posture State (from ESP32)
                     _buildPostureStateCard(state),
@@ -105,37 +132,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     _buildRawIMUData(state),
                     const SizedBox(height: 24),
 
-                    // 3D Spine Visualizer
-                    const Spine3DVisualizer(),
+                    // COMPACT TAB BAR FOR VIEW SWITCHING
+                    Container(
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: _cardBackgroundColor,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: TabBar(
+                        controller: _tabController,
+                        indicator: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: Colors.blue.withOpacity(0.2),
+                        ),
+                        labelColor: Colors.blue,
+                        unselectedLabelColor: Colors.white54,
+                        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                        labelPadding: EdgeInsets.zero,
+                        tabs: const [
+                          Tab(text: "Back View"),
+                          Tab(text: "Side View"),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // 3D Visualizer
+                    SizedBox(
+                      height: 380,
+                      child: TabBarView(
+                        controller: _tabController,
+                        children: const [
+                          Spine3DVisualizer(showSideView: false),
+                          Spine3DVisualizer(showSideView: true),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 24),
 
                     // Motion Analysis
-                    if (displayData != null) _buildMotionAnalysisSection(displayData),
+                    _buildMotionAnalysisSection(state.motionAnalysis),
                     const SizedBox(height: 24),
 
                     // AI Placeholder
                     const AIModelPlaceholder(),
                     const SizedBox(height: 24),
-
-                  ] else ...[
-                    // Loading/Disconnected State
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 100.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.bluetooth_searching, size: 64, color: Colors.white24),
-                            SizedBox(height: 20),
-                            Text(
-                              'Waiting for device connection...',
-                              style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ],
 
                   // Connection Button
@@ -145,8 +186,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: ElevatedButton.icon(
                         icon: state.connectionStatus == BleStatus.scanning
                             ? const SizedBox(
-                          width: 20,
-                          height: 20,
+                          width: 20, height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
                             : Icon(state.connectionStatus == BleStatus.error ? Icons.refresh : Icons.bluetooth_searching),
@@ -246,6 +286,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         stateColor = Colors.red;
         stateIcon = Icons.error;
         stateText = 'CRITICAL - ADJUST NOW';
+        break;
+      case PostureState.unknown:
+      default:
+        stateColor = Colors.grey;
+        stateIcon = Icons.help_outline;
+        stateText = 'UNKNOWN STATUS';
         break;
     }
 
@@ -423,9 +469,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildMotionAnalysisSection(dynamic data) {
-    final analysis = _analyzer.checkThresholds(data);
-
+  Widget _buildMotionAnalysisSection(Map<String, dynamic> analysis) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
