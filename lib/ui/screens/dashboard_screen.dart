@@ -8,7 +8,6 @@ import '../../ui/widgets/spine_3d_visualizer.dart';
 import '../widgets/main_drawer.dart';
 import '../widgets/ai_model_placeholder.dart';
 
-// Increased visual opacity by making the card background darker
 const Color _cardBackgroundColor = Color(0xFF181818);
 
 class DashboardScreen extends StatefulWidget {
@@ -20,8 +19,6 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   late BiomechanicalAnalyzer _analyzer;
-
-  // Note: Floating controls are not needed in this sequential layout.
 
   @override
   void initState() {
@@ -40,6 +37,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
           appBar: AppBar(
             title: const Text("Lumbar Monitor"),
             actions: [
+              // Connection Status Indicator
+              Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: state.isConnected ? Colors.green.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: state.isConnected ? Colors.green : Colors.grey,
+                    width: 2,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      state.isConnected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+                      color: state.isConnected ? Colors.green : Colors.grey,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      state.isConnected ? 'Connected' : 'Disconnected',
+                      style: TextStyle(
+                        color: state.isConnected ? Colors.green : Colors.grey,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               IconButton(
                 icon: Icon(state.isConnected ? Icons.bluetooth_connected : Icons.bluetooth_disabled),
                 color: state.isConnected ? Colors.blue : Colors.grey,
@@ -48,98 +77,104 @@ class _DashboardScreenState extends State<DashboardScreen> {
               if (displayData != null)
                 IconButton(
                   icon: const Icon(Icons.biotech),
-                  onPressed: () => _showBiomechanicsInfo(context, displayData),
+                  onPressed: () => _showBiomechanicsInfo(context, state),
                 ),
             ],
           ),
           body: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  // Keeping layout stabilization fix: direct Column child
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 24),
-                      _buildConnectionCard(state),
-                      const SizedBox(height: 24),
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  const SizedBox(height: 24),
 
-                      if (displayData != null) ...[
+                  // System Status Card
+                  _buildConnectionCard(state),
+                  const SizedBox(height: 24),
 
-                        // 1. Biomechanics Details Card (Kinematics Data) - RETAINED
-                        _buildBiomechanicsCard(displayData),
-                        const SizedBox(height: 24),
+                  if (state.isConnected) ...[
+                    // Real-time Posture State (from ESP32)
+                    _buildPostureStateCard(state),
+                    const SizedBox(height: 24),
 
-                        // 2. Spine Visualizer
-                        const Spine3DVisualizer(),
-                        const SizedBox(height: 24),
+                    // Primary Metric: Relative Flexion (ESP32 calculated)
+                    _buildFlexionCard(state),
+                    const SizedBox(height: 24),
 
-                        // 3. Motion Analysis Card - RETAINED
-                        _buildMotionAnalysisSection(displayData),
-                        const SizedBox(height: 24),
+                    // Raw IMU Data from ESP32
+                    _buildRawIMUData(state),
+                    const SizedBox(height: 24),
 
-                        // 4. AI Placeholder
-                        const AIModelPlaceholder(),
-                        const SizedBox(height: 24),
+                    // 3D Spine Visualizer
+                    const Spine3DVisualizer(),
+                    const SizedBox(height: 24),
 
-                      ] else ...[
-                        // Loading state fix
-                        Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 100.0),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              mainAxisSize: MainAxisSize.min,
-                              children: const [
-                                CircularProgressIndicator(),
-                                SizedBox(height: 20),
-                                Text('Waiting for IMU data...',
-                                    style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic)),
-                              ],
+                    // Motion Analysis
+                    if (displayData != null) _buildMotionAnalysisSection(displayData),
+                    const SizedBox(height: 24),
+
+                    // AI Placeholder
+                    const AIModelPlaceholder(),
+                    const SizedBox(height: 24),
+
+                  ] else ...[
+                    // Loading/Disconnected State
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 100.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.bluetooth_searching, size: 64, color: Colors.white24),
+                            SizedBox(height: 20),
+                            Text(
+                              'Waiting for device connection...',
+                              style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
+                      ),
+                    ),
+                  ],
 
-                      if (!state.isConnected)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          child: ElevatedButton.icon(
-                            icon: state.connectionStatus == BleStatus.scanning
-                                ? const SizedBox(
-                              width: 20, height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                                : Icon(state.connectionStatus == BleStatus.error ? Icons.refresh : Icons.bluetooth_searching),
-                            label: Text(state.connectionStatus == BleStatus.scanning
-                                ? "Scanning..."
-                                : state.connectionStatus == BleStatus.error
-                                ? "Scan Failed - Retry"
-                                : "Connect to Device"),
-                            onPressed: (state.connectionStatus == BleStatus.disconnected || state.connectionStatus == BleStatus.error)
-                                ? () => state.startConnection()
-                                : null,
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 50),
-                              backgroundColor: state.connectionStatus == BleStatus.error ? Colors.redAccent : Colors.blue,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                          ),
+                  // Connection Button
+                  if (!state.isConnected)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: ElevatedButton.icon(
+                        icon: state.connectionStatus == BleStatus.scanning
+                            ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                            : Icon(state.connectionStatus == BleStatus.error ? Icons.refresh : Icons.bluetooth_searching),
+                        label: Text(state.connectionStatus == BleStatus.scanning
+                            ? "Scanning for ESP32..."
+                            : state.connectionStatus == BleStatus.error
+                            ? "Connection Failed - Retry"
+                            : "Connect to Device"),
+                        onPressed: (state.connectionStatus == BleStatus.disconnected ||
+                            state.connectionStatus == BleStatus.error)
+                            ? () => state.startConnection()
+                            : null,
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 50),
+                          backgroundColor: state.connectionStatus == BleStatus.error ? Colors.redAccent : Colors.blue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
-                    ],
-                  ),
-                );
-              },
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         );
       },
     );
   }
-
-  // --- _buildFloatingAnalysis is REMOVED/NOT USED in this sequential version ---
-
 
   Widget _buildConnectionCard(AppState state) {
     return Container(
@@ -161,16 +196,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Icon(Icons.monitor_heart, color: state.isConnected ? Colors.green : Colors.grey),
           ),
           const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("System Status", style: TextStyle(color: Colors.grey)),
-              Text(state.isConnected ? "Live Monitoring" : "Waiting for Connection",
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("System Status", style: TextStyle(color: Colors.grey)),
+                Text(
+                  state.isConnected ? "Live Monitoring Active" : "Waiting for Connection",
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ],
+            ),
           ),
-          const Spacer(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
@@ -181,7 +218,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: const Row(children: [
               Icon(Icons.sensors, size: 16, color: Colors.blue),
               SizedBox(width: 4),
-              Text("2 IMUs", style: TextStyle(color: Colors.blue, fontSize: 12)),
+              Text("2 IMUs + ZUPT", style: TextStyle(color: Colors.blue, fontSize: 11)),
             ]),
           ),
         ],
@@ -189,8 +226,139 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- KINEMATICS DETAIL CARD (RETAINED) ---
-  Widget _buildBiomechanicsCard(dynamic data) {
+  Widget _buildPostureStateCard(AppState state) {
+    Color stateColor;
+    IconData stateIcon;
+    String stateText;
+
+    switch (state.postureState) {
+      case PostureState.safe:
+        stateColor = Colors.green;
+        stateIcon = Icons.check_circle;
+        stateText = 'SAFE POSTURE';
+        break;
+      case PostureState.warning:
+        stateColor = Colors.orange;
+        stateIcon = Icons.warning;
+        stateText = 'WARNING - CHECK POSTURE';
+        break;
+      case PostureState.critical:
+        stateColor = Colors.red;
+        stateIcon = Icons.error;
+        stateText = 'CRITICAL - ADJUST NOW';
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: stateColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: stateColor, width: 2),
+      ),
+      child: Row(
+        children: [
+          Icon(stateIcon, color: stateColor, size: 40),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  stateText,
+                  style: TextStyle(
+                    color: stateColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'ESP32 Real-time Analysis',
+                  style: TextStyle(color: stateColor.withOpacity(0.7), fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFlexionCard(AppState state) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _cardBackgroundColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.straighten, color: Colors.blue),
+              SizedBox(width: 8),
+              Text("Lumbar Flexion Angle", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            "${state.relativeFlexion.toStringAsFixed(1)}°",
+            style: const TextStyle(
+              fontSize: 64,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Calculated by ESP32 Filters",
+            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildThresholdIndicator("Safe", Colors.green, state.relativeFlexion < 20),
+              const SizedBox(width: 16),
+              _buildThresholdIndicator("Warning", Colors.orange, state.relativeFlexion >= 20 && state.relativeFlexion < 30),
+              const SizedBox(width: 16),
+              _buildThresholdIndicator("Critical", Colors.red, state.relativeFlexion >= 30),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThresholdIndicator(String label, Color color, bool isActive) {
+    return Column(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: isActive ? color : color.withOpacity(0.2),
+            shape: BoxShape.circle,
+            border: Border.all(color: color, width: 2),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: isActive ? color : Colors.grey,
+            fontSize: 10,
+            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRawIMUData(AppState state) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -201,70 +369,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(children: [
-            Icon(Icons.biotech, color: Colors.blue),
-            SizedBox(width: 8),
-            Text("Biomechanical Data", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          ]),
-          const SizedBox(height: 12),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                const SizedBox(width: 8),
-                _buildDataItem("Flexion", "${data.relativeFlexion.toStringAsFixed(1)}°", Colors.blue),
-                const SizedBox(width: 12),
-                _buildDataItem("Extension", "${data.relativeExtension.toStringAsFixed(1)}°", Colors.orange),
-                const SizedBox(width: 12),
-                _buildDataItem("Lateral Bend", "${data.relativeLateralBend.toStringAsFixed(1)}°", Colors.green),
-                const SizedBox(width: 12),
-                _buildDataItem("Rotation", "${data.relativeRotation.toStringAsFixed(1)}°", Colors.red),
-                const SizedBox(width: 12),
-                _buildDataItem("Compression", "${data.estimatedCompression.toStringAsFixed(1)}%", Colors.purple),
-                const SizedBox(width: 8),
-              ],
-            ),
+          const Row(
+            children: [
+              Icon(Icons.sensors, color: Colors.purple),
+              SizedBox(width: 8),
+              Text("Raw IMU Data", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: _buildIMUColumn("Pelvis", state.pelvisPitch, state.pelvisRoll, state.pelvisYaw, Colors.blue)),
+              const SizedBox(width: 16),
+              Expanded(child: _buildIMUColumn("Lumbar", state.lumbarPitch, state.lumbarRoll, state.lumbarYaw, Colors.green)),
+            ],
           ),
         ],
       ),
     );
   }
 
-
-  Widget _buildDataItem(String label, String value, Color color) {
-    // This helper function is used by _buildBiomechanicsCard and _showBiomechanicsInfo
-    final displayLabel = label.split(' ').map((s) => s.substring(0, 1).toUpperCase() + s.substring(1)).join('\n');
-
-    return Column(
-      children: [
-        Container(
-          width: 37, height: 37,
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withOpacity(0.3)),
-          ),
-          child: Center(
-            child: Text(label.substring(0, 1), style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 15)),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-        SizedBox(
-          width: 60,
-          child: Text(
-            displayLabel,
-            style: const TextStyle(color: Colors.grey, fontSize: 10),
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
+  Widget _buildIMUColumn(String label, double pitch, double roll, double yaw, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14)),
+          const SizedBox(height: 8),
+          _buildIMURow("Pitch", pitch, color),
+          _buildIMURow("Roll", roll, color),
+          _buildIMURow("Yaw", yaw, color),
+        ],
+      ),
     );
   }
 
-  // --- MOTION ANALYSIS SECTION (RETAINED) ---
+  Widget _buildIMURow(String label, double value, Color color) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+          Text("${value.toStringAsFixed(1)}°", style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMotionAnalysisSection(dynamic data) {
     final analysis = _analyzer.checkThresholds(data);
 
@@ -282,12 +440,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 4),
           Row(children: [
             Container(
-              width: 12, height: 12,
+              width: 12,
+              height: 12,
               decoration: BoxDecoration(color: analysis['isSafe'] ? Colors.green : Colors.orange, borderRadius: BorderRadius.circular(2)),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(analysis['isSafe'] ? 'Safe Posture' : 'Motion Warnings Detected',
+              child: Text(
+                analysis['isSafe'] ? 'All Movements Safe' : 'Motion Warnings Detected',
                 style: TextStyle(color: analysis['isSafe'] ? Colors.green : Colors.orange, fontWeight: FontWeight.bold),
               ),
             ),
@@ -297,9 +457,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ...analysis['warnings'].map((warning) => Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Row(children: [
-                Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
                 const SizedBox(width: 8),
-                Expanded(child: Text(warning, style: TextStyle(color: Colors.orange, fontSize: 12))),
+                Expanded(child: Text(warning, style: const TextStyle(color: Colors.orange, fontSize: 12))),
               ]),
             )),
           ],
@@ -308,88 +468,81 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ...analysis['danger'].map((danger) => Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Row(children: [
-                Icon(Icons.error, size: 16, color: Colors.red),
+                const Icon(Icons.error, size: 16, color: Colors.red),
                 const SizedBox(width: 8),
-                Expanded(child: Text(danger, style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold))),
+                Expanded(child: Text(danger, style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold))),
               ]),
             )),
           ],
           if (analysis['warnings'].isEmpty && analysis['danger'].isEmpty)
-            const Text('All movements safe.', style: TextStyle(color: Colors.green, fontSize: 12)),
+            const Text('All movements within safe limits.', style: TextStyle(color: Colors.green, fontSize: 12)),
         ],
       ),
     );
   }
-  // -------------------------------------------------------------
 
-
-  void _showBiomechanicsInfo(BuildContext context, dynamic data) {
+  void _showBiomechanicsInfo(BuildContext context, AppState state) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: SizedBox(
-          width: double.maxFinite,
-          child: const Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.biotech, color: Colors.blue),
-              SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Biomechanics', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    Text('Information', style: TextStyle(fontSize: 16)),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        title: const Row(
+          children: [
+            Icon(Icons.biotech, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('System Information'),
+          ],
         ),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('IMU Sensor Configuration:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('IMU Configuration:', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              _buildSensorInfo('T12/L1 IMU', 'Upper sensor at thoracolumbar junction', Colors.blue),
-              _buildSensorInfo('L4/L5 IMU', 'Lower reference sensor at lumbosacral junction', Colors.green),
+              _buildInfoRow('Pelvis IMU', 'L4/L5 Reference Sensor', Colors.blue),
+              _buildInfoRow('Lumbar IMU', 'T12/L1 Upper Sensor', Colors.green),
               const SizedBox(height: 16),
-              const Text('Current Reading:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('Current Data:', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text('Flexion: ${data.relativeFlexion.toStringAsFixed(1)}°'),
-              Text('Extension: ${data.relativeExtension.toStringAsFixed(1)}°'),
-              Text('Lateral Bend: ${data.relativeLateralBend.toStringAsFixed(1)}°'),
-              Text('Rotation: ${data.relativeRotation.toStringAsFixed(1)}°'),
-              Text('Compression: ${data.estimatedCompression.toStringAsFixed(1)}%'),
+              Text('Pelvis: P${state.pelvisPitch.toStringAsFixed(1)}° R${state.pelvisRoll.toStringAsFixed(1)}° Y${state.pelvisYaw.toStringAsFixed(1)}°'),
+              Text('Lumbar: P${state.lumbarPitch.toStringAsFixed(1)}° R${state.lumbarRoll.toStringAsFixed(1)}° Y${state.lumbarYaw.toStringAsFixed(1)}°'),
+              Text('Relative Flexion: ${state.relativeFlexion.toStringAsFixed(1)}°', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('State: ${state.getPostureStateString()}', style: TextStyle(color: state.getMotionSafetyColor())),
+              const SizedBox(height: 16),
+              const Text('Filter Stack:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text('• Complementary Filter (β=0.03)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text('• SHOE ZUPT Detector (N=5)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text('• Quaternion-based Orientation', style: TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
         ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+        ],
       ),
     );
   }
 
-  Widget _buildSensorInfo(String name, String description, Color color) {
+  Widget _buildInfoRow(String name, String description, Color color) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 8, height: 8,
+            width: 8,
+            height: 8,
             margin: const EdgeInsets.only(top: 6),
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(1)),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
-                Text(description, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                Text(name, style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 12)),
+                Text(description, style: const TextStyle(fontSize: 11, color: Colors.grey)),
               ],
             ),
           ),

@@ -8,6 +8,8 @@ import '../services/cloud_service.dart';
 import '../models/biomechanical_data.dart';
 import '../services/biomechanical_analyzer.dart';
 
+enum PostureState { safe, warning, critical }
+
 class AppState extends ChangeNotifier {
   final BleService _bleService = BleService();
   final EncryptionService _cryptoService = EncryptionService();
@@ -16,7 +18,16 @@ class AppState extends ChangeNotifier {
 
   String? _activationKey;
   BleStatus _connectionStatus = BleStatus.disconnected;
-  double _lumbarAngle = 0.0;
+
+  // ESP32 sends these directly now
+  double _pelvisPitch = 0.0;
+  double _pelvisRoll = 0.0;
+  double _pelvisYaw = 0.0;
+  double _lumbarPitch = 0.0;
+  double _lumbarRoll = 0.0;
+  double _lumbarYaw = 0.0;
+  double _relativeFlexion = 0.0; // Calculated on ESP32
+  PostureState _postureState = PostureState.safe;
 
   int _packetCounter = 0;
 
@@ -28,9 +39,18 @@ class AppState extends ChangeNotifier {
 
   StreamSubscription? _dummyDataSubscription;
 
+  // Getters
   BleStatus get connectionStatus => _connectionStatus;
-  double get lumbarAngle => _lumbarAngle;
   bool get isConnected => _connectionStatus == BleStatus.connected;
+
+  double get pelvisPitch => _pelvisPitch;
+  double get pelvisRoll => _pelvisRoll;
+  double get pelvisYaw => _pelvisYaw;
+  double get lumbarPitch => _lumbarPitch;
+  double get lumbarRoll => _lumbarRoll;
+  double get lumbarYaw => _lumbarYaw;
+  double get relativeFlexion => _relativeFlexion;
+  PostureState get postureState => _postureState;
 
   SpineKinematics? get currentSpineKinematics => _currentSpineKinematics;
   List<SpineKinematics> get spineHistory => _spineHistory;
@@ -178,7 +198,7 @@ class AppState extends ChangeNotifier {
       if (status == BleStatus.connected) {
         debugPrint("🔌 [AppState] Connected. Initializing encryption.");
         if (_activationKey != null) {
-          _cryptoService.init(_activationKey!); 
+          _cryptoService.init(_activationKey!);
         }
         _useDummyData = false;
         _stopDummyDataStream();
@@ -191,16 +211,12 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     });
 
-    // Listen to Data, Decrypt it, and Process it
     _bleService.dataStream.listen((encryptedPacket) {
       if (encryptedPacket.isEmpty || _useDummyData) return;
 
-      // Decrypt the entire packet. The service now correctly handles the IV stream.
       final String decryptedData = _cryptoService.decrypt(Uint8List.fromList(encryptedPacket));
 
       if (decryptedData.isNotEmpty) {
-        // The ESP32 sends one complete CSV string per notification, without a newline.
-        // We can process it directly.
         final line = decryptedData.trim();
         if (line.isNotEmpty) {
           _processData(line);
@@ -212,28 +228,77 @@ class AppState extends ChangeNotifier {
   void _processData(String dataString) {
     _packetCounter++;
     try {
-      debugPrint("📊 [AppState] Processing line #$_packetCounter: $dataString");
+      debugPrint("📊 [AppState] Processing packet #$_packetCounter: $dataString");
 
       final parts = dataString.trim().split(',');
-      if (parts.length >= 6) {
-        final upperPitch = double.tryParse(parts[0]) ?? 0.0;
-        final upperRoll = double.tryParse(parts[1]) ?? 0.0;
-        final upperYaw = double.tryParse(parts[2]) ?? 0.0;
-        final lowerPitch = double.tryParse(parts[3]) ?? 0.0;
-        final lowerRoll = double.tryParse(parts[4]) ?? 0.0;
-        final lowerYaw = double.tryParse(parts[5]) ?? 0.0;
 
-        final upperIMU = IMUSensorData(sensorId: 'upper', timestamp: DateTime.now(), pitch: upperPitch, roll: upperRoll, yaw: upperYaw, accelX: 0.0, accelY: 0.0, accelZ: 9.8);
-        final lowerIMU = IMUSensorData(sensorId: 'lower', timestamp: DateTime.now(), pitch: lowerPitch, roll: lowerRoll, yaw: lowerYaw, accelX: 0.0, accelY: 0.0, accelZ: 9.8);
+      // ESP32 Format: PelvisPitch,PelvisRoll,PelvisYaw,LumbarPitch,LumbarRoll,LumbarYaw,RelativeFlexion,State
+      if (parts.length >= 8) {
+        _pelvisPitch = double.tryParse(parts[0]) ?? 0.0;
+        _pelvisRoll = double.tryParse(parts[1]) ?? 0.0;
+        _pelvisYaw = double.tryParse(parts[2]) ?? 0.0;
+        _lumbarPitch = double.tryParse(parts[3]) ?? 0.0;
+        _lumbarRoll = double.tryParse(parts[4]) ?? 0.0;
+        _lumbarYaw = double.tryParse(parts[5]) ?? 0.0;
+        _relativeFlexion = double.tryParse(parts[6]) ?? 0.0;
 
-        final kinematics = _biomechanicalAnalyzer.calculateKinematics(upperIMU, lowerIMU);
-        _updateRealtimeKinematics(kinematics);
+        // Parse state string
+        String stateStr = parts[7].trim().toUpperCase();
+        if (stateStr == "GREEN") {
+          _postureState = PostureState.safe;
+        } else if (stateStr == "YELLOW") {
+          _postureState = PostureState.warning;
+        } else if (stateStr == "RED") {
+          _postureState = PostureState.critical;
+        }
+
+        // Create IMU sensor data for compatibility with existing visualizations
+        final pelvisIMU = IMUSensorData(
+            sensorId: 'pelvis',
+            timestamp: DateTime.now(),
+            pitch: _pelvisPitch,
+            roll: _pelvisRoll,
+            yaw: _pelvisYaw,
+            accelX: 0.0,
+            accelY: 0.0,
+            accelZ: 9.8
+        );
+
+        final lumbarIMU = IMUSensorData(
+            sensorId: 'lumbar',
+            timestamp: DateTime.now(),
+            pitch: _lumbarPitch,
+            roll: _lumbarRoll,
+            yaw: _lumbarYaw,
+            accelX: 0.0,
+            accelY: 0.0,
+            accelZ: 9.8
+        );
+
+        // Calculate full kinematics for visualization
+        final kinematics = _biomechanicalAnalyzer.calculateKinematics(pelvisIMU, lumbarIMU);
+
+        // Override with ESP32's calculated flexion (more accurate due to ZUPT)
+        final adjustedKinematics = SpineKinematics(
+          upperSensor: kinematics.upperSensor,
+          lowerSensor: kinematics.lowerSensor,
+          timestamp: kinematics.timestamp,
+          relativeFlexion: _relativeFlexion.abs(), // Use ESP32's calculation
+          relativeExtension: _relativeFlexion < 0 ? _relativeFlexion.abs() : 0,
+          relativeLateralBend: kinematics.relativeLateralBend,
+          relativeRotation: kinematics.relativeRotation,
+          estimatedCompression: kinematics.estimatedCompression,
+        );
+
+        _updateRealtimeKinematics(adjustedKinematics);
+
+        debugPrint("✅ [AppState] Updated: Flexion=${_relativeFlexion.toStringAsFixed(1)}° State=$stateStr");
       } else {
-        debugPrint("❌ [AppState] Invalid packet format in line #$_packetCounter. Expected 6 values, got ${parts.length}. Data: '$dataString'");
+        debugPrint("❌ [AppState] Invalid packet format. Expected 8 values, got ${parts.length}");
       }
     } catch (e, stackTrace) {
-      debugPrint("❌ [AppState] Error processing line #$_packetCounter: $e");
-      debugPrint("❌ [AppState] Stack trace: $stackTrace");
+      debugPrint("❌ [AppState] Error processing packet #$_packetCounter: $e");
+      debugPrint("Stack trace: $stackTrace");
     }
   }
 
@@ -244,22 +309,35 @@ class AppState extends ChangeNotifier {
   }
 
   Color getMotionSafetyColor() {
-    if (_motionAnalysis['danger']?.isNotEmpty == true) {
-      return Colors.red;
-    } else if (_motionAnalysis['warnings']?.isNotEmpty == true) {
-      return Colors.orange;
-    } else {
-      return Colors.green;
+    switch (_postureState) {
+      case PostureState.safe:
+        return Colors.green;
+      case PostureState.warning:
+        return Colors.orange;
+      case PostureState.critical:
+        return Colors.red;
     }
   }
 
   String getMotionSafetyText() {
-    if (_motionAnalysis['danger']?.isNotEmpty == true) {
-      return 'Dangerous Posture';
-    } else if (_motionAnalysis['warnings']?.isNotEmpty == true) {
-      return 'Warning - Check Posture';
-    } else {
-      return 'Safe Posture';
+    switch (_postureState) {
+      case PostureState.safe:
+        return 'Safe Posture';
+      case PostureState.warning:
+        return 'Warning - Check Posture';
+      case PostureState.critical:
+        return 'Dangerous Posture';
+    }
+  }
+
+  String getPostureStateString() {
+    switch (_postureState) {
+      case PostureState.safe:
+        return 'GREEN';
+      case PostureState.warning:
+        return 'YELLOW';
+      case PostureState.critical:
+        return 'RED';
     }
   }
 }
