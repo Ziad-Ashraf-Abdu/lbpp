@@ -3,10 +3,8 @@ import 'package:provider/provider.dart';
 import '../../providers/app_state.dart';
 import '../../services/ble_service.dart';
 import '../../config/constants.dart';
-import '../../services/biomechanical_analyzer.dart';
 import '../../ui/widgets/spine_3d_visualizer.dart';
 import '../widgets/main_drawer.dart';
-import '../widgets/ai_model_placeholder.dart';
 
 const Color _cardBackgroundColor = Color(0xFF181818);
 
@@ -18,13 +16,11 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProviderStateMixin {
-  late BiomechanicalAnalyzer _analyzer;
   late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
-    _analyzer = BiomechanicalAnalyzer();
     _tabController = TabController(length: 2, vsync: this, initialIndex: 1);
   }
 
@@ -38,8 +34,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Widget build(BuildContext context) {
     return Consumer<AppState>(
       builder: (context, state, child) {
-        final displayData = state.currentSpineKinematics;
-
         return Scaffold(
           drawer: const MainDrawer(),
           appBar: AppBar(
@@ -82,7 +76,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 color: state.isConnected ? Colors.blue : Colors.grey,
                 onPressed: () => state.isConnected ? state.disconnect() : state.startConnection(),
               ),
-              if (displayData != null)
+              if (state.currentSpineKinematics != null)
                 IconButton(
                   icon: const Icon(Icons.biotech),
                   onPressed: () => _showBiomechanicsInfo(context, state),
@@ -168,14 +162,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ],
                       ),
                     ),
-                    const SizedBox(height: 24),
-
-                    // Motion Analysis
-                    _buildMotionAnalysisSection(state.motionAnalysis),
-                    const SizedBox(height: 24),
-
-                    // AI Placeholder
-                    const AIModelPlaceholder(),
                     const SizedBox(height: 24),
                   ],
 
@@ -464,62 +450,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         children: [
           Text(label, style: const TextStyle(color: Colors.grey, fontSize: 11)),
           Text("${value.toStringAsFixed(1)}°", style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMotionAnalysisSection(Map<String, dynamic> analysis) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _cardBackgroundColor.withOpacity(0.8),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: analysis['isSafe'] ? Colors.green.withOpacity(0.3) : Colors.orange.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 4),
-          Row(children: [
-            Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(color: analysis['isSafe'] ? Colors.green : Colors.orange, borderRadius: BorderRadius.circular(2)),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                analysis['isSafe'] ? 'All Movements Safe' : 'Motion Warnings Detected',
-                style: TextStyle(color: analysis['isSafe'] ? Colors.green : Colors.orange, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 8),
-          if (analysis['warnings'].isNotEmpty) ...[
-            ...analysis['warnings'].map((warning) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(children: [
-                const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
-                const SizedBox(width: 8),
-                Expanded(child: Text(warning, style: const TextStyle(color: Colors.orange, fontSize: 12))),
-              ]),
-            )),
-          ],
-          if (analysis['danger'].isNotEmpty) ...[
-            const SizedBox(height: 8),
-            ...analysis['danger'].map((danger) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(children: [
-                const Icon(Icons.error, size: 16, color: Colors.red),
-                const SizedBox(width: 8),
-                Expanded(child: Text(danger, style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold))),
-              ]),
-            )),
-          ],
-          if (analysis['warnings'].isEmpty && analysis['danger'].isEmpty)
-            const Text('All movements within safe limits.', style: TextStyle(color: Colors.green, fontSize: 12)),
         ],
       ),
     );
