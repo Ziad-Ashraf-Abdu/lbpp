@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import '../services/ble_service.dart';
@@ -18,8 +17,8 @@ class AppState extends ChangeNotifier {
 
   String? _activationKey;
   BleStatus _connectionStatus = BleStatus.disconnected;
-  
-  // Individual sensor data fields required by UI
+
+  // Individual sensor data fields
   double _pelvisPitch = 0.0;
   double _pelvisRoll = 0.0;
   double _pelvisYaw = 0.0;
@@ -30,6 +29,9 @@ class AppState extends ChangeNotifier {
   String _espState = "UNKNOWN";
 
   int _packetCounter = 0;
+  int _successfulPackets = 0;
+  int _failedPackets = 0;
+  DateTime? _lastUpdateTime;
 
   SpineKinematics? _currentSpineKinematics;
   final List<SpineKinematics> _spineHistory = [];
@@ -38,11 +40,13 @@ class AppState extends ChangeNotifier {
   bool _isBiomechanicsActive = false;
 
   StreamSubscription? _dummyDataSubscription;
+  StreamSubscription? _bleStatusSubscription;
+  StreamSubscription? _bleDataSubscription;
 
   // Getters
   BleStatus get connectionStatus => _connectionStatus;
   bool get isConnected => _connectionStatus == BleStatus.connected;
-  
+
   double get pelvisPitch => _pelvisPitch;
   double get pelvisRoll => _pelvisRoll;
   double get pelvisYaw => _pelvisYaw;
@@ -50,7 +54,7 @@ class AppState extends ChangeNotifier {
   double get lumbarRoll => _lumbarRoll;
   double get lumbarYaw => _lumbarYaw;
   double get relativeFlexion => _relativeFlexion;
-  
+
   PostureState get postureState {
     if (_espState == "RED") return PostureState.critical;
     if (_espState == "YELLOW") return PostureState.warning;
@@ -64,6 +68,12 @@ class AppState extends ChangeNotifier {
   bool get useDummyData => _useDummyData;
   bool get isBiomechanicsActive => _isBiomechanicsActive;
 
+  // Debug getters
+  int get packetCounter => _packetCounter;
+  int get successfulPackets => _successfulPackets;
+  int get failedPackets => _failedPackets;
+  DateTime? get lastUpdateTime => _lastUpdateTime;
+
   AppState() {
     _listenToBle();
     _initializeBiomechanics();
@@ -72,6 +82,8 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _dummyDataSubscription?.cancel();
+    _bleStatusSubscription?.cancel();
+    _bleDataSubscription?.cancel();
     _bleService.dispose();
     super.dispose();
   }
@@ -79,6 +91,7 @@ class AppState extends ChangeNotifier {
   void setActivationKey(String key) {
     _activationKey = key;
     _cryptoService.init(key);
+    debugPrint("[AppState] Activation key set: $key");
     notifyListeners();
   }
 
@@ -86,6 +99,14 @@ class AppState extends ChangeNotifier {
     if (_activationKey == null) {
       setActivationKey("LBPP-DEMO-KEY-2024");
     }
+
+    // Reset encryption state
+    _cryptoService.reset();
+    _packetCounter = 0;
+    _successfulPackets = 0;
+    _failedPackets = 0;
+
+    debugPrint("[AppState] Starting connection with key: $_activationKey");
     _bleService.scanAndHandshake(_activationKey!);
   }
 
@@ -129,7 +150,7 @@ class AppState extends ChangeNotifier {
 
       _currentSpineKinematics = kinematics;
       _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(kinematics);
-      
+
       _pelvisPitch = kinematics.lowerSensor.pitch;
       _pelvisRoll = kinematics.lowerSensor.roll;
       _pelvisYaw = kinematics.lowerSensor.yaw;
@@ -192,8 +213,14 @@ class AppState extends ChangeNotifier {
   List<Map<String, dynamic>> getBiomechanicsSummary() {
     if (_spineHistory.isEmpty) return [];
 
-    final dangerousReadings = _spineHistory.where((k) => _biomechanicalAnalyzer.checkThresholds(k)['danger'].isNotEmpty).length;
-    final warningReadings = _spineHistory.where((k) => _biomechanicalAnalyzer.checkThresholds(k)['warnings'].isNotEmpty).length;
+    final dangerousReadings = _spineHistory.where(
+            (k) => _biomechanicalAnalyzer.checkThresholds(k)['danger'].isNotEmpty
+    ).length;
+
+    final warningReadings = _spineHistory.where(
+            (k) => _biomechanicalAnalyzer.checkThresholds(k)['warnings'].isNotEmpty
+    ).length;
+
     final avgFlexion = _spineHistory.map((k) => k.relativeFlexion).reduce((a, b) => a + b) / _spineHistory.length;
     final avgCompression = _spineHistory.map((k) => k.estimatedCompression).reduce((a, b) => a + b) / _spineHistory.length;
 
@@ -207,75 +234,118 @@ class AppState extends ChangeNotifier {
   }
 
   void _listenToBle() {
-    _bleService.statusStream.listen((status) {
+    // Listen to connection status
+    _bleStatusSubscription = _bleService.statusStream.listen((status) {
+      debugPrint("[AppState] BLE Status changed: $status");
       _connectionStatus = status;
+
       if (status == BleStatus.connected) {
-        debugPrint("🔌 [AppState] Connected. Initializing encryption.");
-        if (_activationKey != null) {
-          _cryptoService.init(_activationKey!); 
-        }
+        debugPrint("[AppState] Connected - switching to real data");
         _useDummyData = false;
         _stopDummyDataStream();
         _currentSpineKinematics = null;
-      } else if (status == BleStatus.disconnected) {
-        debugPrint("🔌 [AppState] Disconnected. Switching to dummy data.");
+
+        // Reset crypto state
+        if (_activationKey != null) {
+          _cryptoService.reset();
+          _cryptoService.init(_activationKey!);
+        }
+      } else if (status == BleStatus.disconnected || status == BleStatus.error) {
+        debugPrint("[AppState] Disconnected/Error - switching to dummy data");
         _useDummyData = true;
         _initializeBiomechanics();
       }
+
       notifyListeners();
     });
 
-    _bleService.dataStream.listen((encryptedPacket) {
+    // Listen to incoming data
+    _bleDataSubscription = _bleService.dataStream.listen((encryptedPacket) {
       if (encryptedPacket.isEmpty || _useDummyData) return;
 
-      final String decryptedData = _cryptoService.decrypt(Uint8List.fromList(encryptedPacket));
+      _packetCounter++;
+      debugPrint("[AppState] Received packet #$_packetCounter (${encryptedPacket.length} bytes)");
 
-      if (decryptedData.isNotEmpty) {
-        final line = decryptedData.trim();
-        if (line.isNotEmpty) {
-          _processData(line);
+      try {
+        // Decrypt
+        final String decryptedData = _cryptoService.decrypt(Uint8List.fromList(encryptedPacket));
+
+        if (decryptedData.isNotEmpty) {
+          debugPrint("[AppState] Decrypted data: '$decryptedData'");
+          _processData(decryptedData);
+          _successfulPackets++;
+          _lastUpdateTime = DateTime.now();
+        } else {
+          debugPrint("[AppState] Empty decrypted data");
+          _failedPackets++;
         }
+      } catch (e, stackTrace) {
+        debugPrint("[AppState] Error processing packet #$_packetCounter: $e");
+        debugPrint("[AppState] Stack trace: $stackTrace");
+        _failedPackets++;
       }
+
+      notifyListeners();
     });
   }
 
   void _processData(String dataString) {
-    _packetCounter++;
     try {
-      debugPrint("📊 [AppState] Processing line #$_packetCounter: $dataString");
+      // Clean the string
+      final line = dataString.trim();
+      if (line.isEmpty) {
+        debugPrint("[AppState] Empty line after trim");
+        return;
+      }
 
-      final parts = dataString.trim().split(',');
+      debugPrint("[AppState] Processing: '$line'");
+
+      // Split CSV
+      final parts = line.split(',');
+      debugPrint("[AppState] Split into ${parts.length} parts: $parts");
+
       if (parts.length >= 8) {
-        _pelvisPitch = double.tryParse(parts[0]) ?? 0.0;
-        _pelvisRoll = double.tryParse(parts[1]) ?? 0.0;
-        _pelvisYaw = double.tryParse(parts[2]) ?? 0.0;
-        
-        _lumbarPitch = double.tryParse(parts[3]) ?? 0.0;
-        _lumbarRoll = double.tryParse(parts[4]) ?? 0.0;
-        _lumbarYaw = double.tryParse(parts[5]) ?? 0.0;
+        // Parse all values
+        _pelvisPitch = double.tryParse(parts[0].trim()) ?? 0.0;
+        _pelvisRoll = double.tryParse(parts[1].trim()) ?? 0.0;
+        _pelvisYaw = double.tryParse(parts[2].trim()) ?? 0.0;
 
-        _relativeFlexion = double.tryParse(parts[6]) ?? 0.0;
-        _espState = parts[7];
+        _lumbarPitch = double.tryParse(parts[3].trim()) ?? 0.0;
+        _lumbarRoll = double.tryParse(parts[4].trim()) ?? 0.0;
+        _lumbarYaw = double.tryParse(parts[5].trim()) ?? 0.0;
 
+        _relativeFlexion = double.tryParse(parts[6].trim()) ?? 0.0;
+        _espState = parts[7].trim().toUpperCase();
+
+        debugPrint("[AppState] Parsed successfully:");
+        debugPrint("  Pelvis: P=$_pelvisPitch R=$_pelvisRoll Y=$_pelvisYaw");
+        debugPrint("  Lumbar: P=$_lumbarPitch R=$_lumbarRoll Y=$_lumbarYaw");
+        debugPrint("  Flexion: $_relativeFlexion°");
+        debugPrint("  State: $_espState");
+
+        // Create IMU data
         final upperIMU = IMUSensorData(
-          sensorId: 'upper', 
-          timestamp: DateTime.now(), 
-          pitch: _lumbarPitch, 
-          roll: _lumbarRoll, 
-          yaw: _lumbarYaw, 
-          accelX: 0.0, accelY: 0.0, accelZ: 9.8
-        );
-        final lowerIMU = IMUSensorData(
-          sensorId: 'lower', 
-          timestamp: DateTime.now(), 
-          pitch: _pelvisPitch, 
-          roll: _pelvisRoll, 
-          yaw: _pelvisYaw, 
-          accelX: 0.0, accelY: 0.0, accelZ: 9.8
+            sensorId: 'upper',
+            timestamp: DateTime.now(),
+            pitch: _lumbarPitch,
+            roll: _lumbarRoll,
+            yaw: _lumbarYaw,
+            accelX: 0.0, accelY: 0.0, accelZ: 9.8
         );
 
+        final lowerIMU = IMUSensorData(
+            sensorId: 'lower',
+            timestamp: DateTime.now(),
+            pitch: _pelvisPitch,
+            roll: _pelvisRoll,
+            yaw: _pelvisYaw,
+            accelX: 0.0, accelY: 0.0, accelZ: 9.8
+        );
+
+        // Calculate kinematics
         final kinematics = _biomechanicalAnalyzer.calculateKinematics(upperIMU, lowerIMU);
-        
+
+        // Use ESP32's calculated flexion
         final correctedKinematics = SpineKinematics(
           upperSensor: upperIMU,
           lowerSensor: lowerIMU,
@@ -288,9 +358,13 @@ class AppState extends ChangeNotifier {
         );
 
         _updateRealtimeKinematics(correctedKinematics);
+
+      } else {
+        debugPrint("[AppState] Invalid data format: expected 8 fields, got ${parts.length}");
       }
     } catch (e, stackTrace) {
-      debugPrint("❌ [AppState] Error processing line #$_packetCounter: $e");
+      debugPrint("[AppState] Error parsing data: $e");
+      debugPrint("[AppState] Stack trace: $stackTrace");
     }
   }
 
@@ -320,5 +394,19 @@ class AppState extends ChangeNotifier {
 
   String getPostureStateString() {
     return _espState;
+  }
+
+  // Debug helper
+  String getDebugInfo() {
+    return '''
+Debug Info:
+- Total Packets: $_packetCounter
+- Successful: $_successfulPackets
+- Failed: $_failedPackets
+- Last Update: ${_lastUpdateTime?.toString() ?? 'Never'}
+- Connection: $_connectionStatus
+- Dummy Data: $_useDummyData
+- Current IV: ${_cryptoService.getIVState()}
+    ''';
   }
 }
