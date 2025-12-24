@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../providers/app_state.dart';
 import '../screens/account_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/info_screens.dart';
@@ -8,12 +10,15 @@ class MainDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Access the state to get the username and connection status
+    final state = context.watch<AppState>();
+
     return Drawer(
       backgroundColor: const Color(0xFF1E1E1E),
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
-          // 1. User Header
+          // 1. User Header (Updated with dynamic User Data)
           UserAccountsDrawerHeader(
             decoration: const BoxDecoration(
               color: Color(0xFF2196F3),
@@ -23,8 +28,10 @@ class MainDrawer extends StatelessWidget {
                 opacity: 0.2,
               ),
             ),
-            accountName: const Text("Active User", style: TextStyle(fontWeight: FontWeight.bold)),
-            accountEmail: const Text("Device ID: ESP32-S3-BETA"),
+            // Replaced "Active User" with the real username from state
+            accountName: Text(state.userName, style: const TextStyle(fontWeight: FontWeight.bold)),
+            // Replaced static ID with dynamic status/ID
+            accountEmail: Text(state.isConnected ? "ID: ESP32-S3-BETA (Active)" : "Device Offline"),
             currentAccountPicture: CircleAvatar(
               backgroundColor: Colors.white,
               child: Icon(Icons.person, size: 40, color: Colors.grey[800]),
@@ -32,7 +39,7 @@ class MainDrawer extends StatelessWidget {
           ),
 
           // 2. Navigation Items
-          _buildDrawerItem(context, Icons.dashboard, "Dashboard", null), // Closes drawer
+          _buildDrawerItem(context, Icons.dashboard, "Dashboard", null),
           _buildDrawerItem(context, Icons.person, "My Account", const AccountScreen()),
           _buildDrawerItem(context, Icons.tune, "Customization", const SettingsScreen()),
 
@@ -45,6 +52,17 @@ class MainDrawer extends StatelessWidget {
           _buildDrawerItem(context, Icons.gavel, "Legal & Privacy", const InfoScreen(type: InfoType.legal)),
           _buildDrawerItem(context, Icons.info_outline, "About Us", const InfoScreen(type: InfoType.about)),
           _buildDrawerItem(context, Icons.contact_support, "Contact Support", const InfoScreen(type: InfoType.contact)),
+
+          const Divider(color: Colors.white24),
+          // Added Logout to handle session cleanup
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.redAccent),
+            title: const Text("Logout", style: TextStyle(color: Colors.redAccent)),
+            onTap: () {
+              state.disconnect();
+              Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false);
+            },
+          ),
         ],
       ),
     );

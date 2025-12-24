@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import '../services/ble_service.dart';
 import '../services/encryption_service.dart';
 import '../services/cloud_service.dart';
@@ -10,15 +11,21 @@ import '../services/biomechanical_analyzer.dart';
 enum PostureState { safe, warning, critical, unknown }
 
 class AppState extends ChangeNotifier {
+  // --- Services ---
   final BleService _bleService = BleService();
   final EncryptionService _cryptoService = EncryptionService();
   final CloudService _cloudService = CloudService();
   final BiomechanicalAnalyzer _biomechanicalAnalyzer = BiomechanicalAnalyzer();
 
+  // --- Profile & Auth State ---
+  String _userName = "User";
   String? _activationKey;
+  bool _isKeyValidated = false;
+
+  // --- Connection Status ---
   BleStatus _connectionStatus = BleStatus.disconnected;
 
-  // Individual sensor data fields
+  // --- Hardware Sensor Fields (8-Part CSV Logic) ---
   double _pelvisPitch = 0.0;
   double _pelvisRoll = 0.0;
   double _pelvisYaw = 0.0;
@@ -28,24 +35,30 @@ class AppState extends ChangeNotifier {
   double _relativeFlexion = 0.0;
   String _espState = "UNKNOWN";
 
+  // --- Diagnostics & Performance ---
   int _packetCounter = 0;
   int _successfulPackets = 0;
   int _failedPackets = 0;
   DateTime? _lastUpdateTime;
 
+  // --- Biomechanical Analysis State ---
   SpineKinematics? _currentSpineKinematics;
   final List<SpineKinematics> _spineHistory = [];
   Map<String, dynamic> _motionAnalysis = {};
   bool _useDummyData = true;
   bool _isBiomechanicsActive = false;
 
+  // --- Stream Subscriptions ---
   StreamSubscription? _dummyDataSubscription;
   StreamSubscription? _bleStatusSubscription;
   StreamSubscription? _bleDataSubscription;
 
-  // Getters
+  // --- Getters ---
+  String get userName => _userName;
+  String? get activationKey => _activationKey;
   BleStatus get connectionStatus => _connectionStatus;
   bool get isConnected => _connectionStatus == BleStatus.connected;
+  bool get isKeyValidated => _isKeyValidated;
 
   double get pelvisPitch => _pelvisPitch;
   double get pelvisRoll => _pelvisRoll;
@@ -68,12 +81,12 @@ class AppState extends ChangeNotifier {
   bool get useDummyData => _useDummyData;
   bool get isBiomechanicsActive => _isBiomechanicsActive;
 
-  // Debug getters
   int get packetCounter => _packetCounter;
   int get successfulPackets => _successfulPackets;
   int get failedPackets => _failedPackets;
   DateTime? get lastUpdateTime => _lastUpdateTime;
 
+  // --- Constructor ---
   AppState() {
     _listenToBle();
     _initializeBiomechanics();
@@ -88,31 +101,40 @@ class AppState extends ChangeNotifier {
     super.dispose();
   }
 
-  void setActivationKey(String key) {
+  // --- Initialization & Security ---
+
+  void initializeUser(String name, String key) {
+    _userName = name;
     _activationKey = key;
     _cryptoService.init(key);
-    debugPrint("[AppState] Activation key set: $key");
+    _isKeyValidated = false; // Key is not validated until first successful data parse
+    debugPrint("[AppState] Initialization Complete: $name");
     notifyListeners();
   }
 
   void startConnection() {
     if (_activationKey == null) {
-      setActivationKey("LBPP-DEMO-KEY-2024");
+      debugPrint("[AppState] Warning: No key found. Using Default Demo Key.");
+      _activationKey = "LBPP-DEMO-2025";
+      _cryptoService.init(_activationKey!);
     }
 
-    // Reset encryption state
     _cryptoService.reset();
     _packetCounter = 0;
     _successfulPackets = 0;
     _failedPackets = 0;
 
-    debugPrint("[AppState] Starting connection with key: $_activationKey");
+    debugPrint("[AppState] Scanning for hardware with key: $_activationKey");
     _bleService.scanAndHandshake(_activationKey!);
   }
 
   void disconnect() {
     _bleService.disconnect();
+    _isKeyValidated = false;
+    notifyListeners();
   }
+
+  // --- Dummy Data Management ---
 
   void toggleDummyData() {
     _useDummyData = !_useDummyData;
@@ -124,22 +146,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void toggleBiomechanics() {
-    _isBiomechanicsActive = !_isBiomechanicsActive;
-    if (_isBiomechanicsActive && _useDummyData) {
-      _startDummyDataStream();
-    }
-    notifyListeners();
-  }
-
   void _initializeBiomechanics() {
     if (_useDummyData) {
       _currentSpineKinematics = _biomechanicalAnalyzer.generateDummyData();
       _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(_currentSpineKinematics!);
       _startDummyDataStream();
-    } else {
-      _currentSpineKinematics = null;
-      _motionAnalysis = {};
     }
   }
 
@@ -147,23 +158,7 @@ class AppState extends ChangeNotifier {
     _dummyDataSubscription?.cancel();
     _dummyDataSubscription = _bleService.getMockIMUData().listen((kinematics) {
       if (!_useDummyData) return;
-
-      _currentSpineKinematics = kinematics;
-      _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(kinematics);
-
-      _pelvisPitch = kinematics.lowerSensor.pitch;
-      _pelvisRoll = kinematics.lowerSensor.roll;
-      _pelvisYaw = kinematics.lowerSensor.yaw;
-      _lumbarPitch = kinematics.upperSensor.pitch;
-      _lumbarRoll = kinematics.upperSensor.roll;
-      _lumbarYaw = kinematics.upperSensor.yaw;
-      _relativeFlexion = kinematics.relativeFlexion;
-
-      _spineHistory.add(kinematics);
-      if (_spineHistory.length > 100) {
-        _spineHistory.removeAt(0);
-      }
-
+      _updateRealtimeKinematics(kinematics);
       notifyListeners();
     });
   }
@@ -173,157 +168,114 @@ class AppState extends ChangeNotifier {
     _dummyDataSubscription = null;
   }
 
+  // --- Real-time Processing ---
+
   void _updateRealtimeKinematics(SpineKinematics kinematics) {
     _currentSpineKinematics = kinematics;
     _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(kinematics);
+
+    _pelvisPitch = kinematics.lowerSensor.pitch;
+    _lumbarPitch = kinematics.upperSensor.pitch;
+    _relativeFlexion = kinematics.relativeFlexion;
 
     _spineHistory.add(kinematics);
     if (_spineHistory.length > 100) {
       _spineHistory.removeAt(0);
     }
 
-    if (kinematics.estimatedCompression > 70) {
-      _sendBiomechanicalAlert();
+    if (postureState == PostureState.critical) {
+      HapticFeedback.heavyImpact();
+    }
+
+    if (kinematics.estimatedCompression > 80.0) {
+      _sendBiomechanicalAlert(kinematics);
     }
 
     notifyListeners();
   }
 
-  void _sendBiomechanicalAlert() {
-    if (_currentSpineKinematics != null) {
-      final alertData = {
-        'timestamp': DateTime.now().toIso8601String(),
-        'flexion': _currentSpineKinematics!.relativeFlexion,
-        'extension': _currentSpineKinematics!.relativeExtension,
-        'lateral_bend': _currentSpineKinematics!.relativeLateralBend,
-        'compression': _currentSpineKinematics!.estimatedCompression,
-        'warnings': _motionAnalysis['warnings'],
-        'danger': _motionAnalysis['danger'],
-      };
-
-      _cloudService.sendBiomechanicalAlert(alertData);
-    }
+  void _sendBiomechanicalAlert(SpineKinematics kinematics) {
+    final alertData = {
+      'user': _userName,
+      'compression': kinematics.estimatedCompression,
+      'flexion': kinematics.relativeFlexion,
+      'time': DateTime.now().toIso8601String(),
+    };
+    _cloudService.sendBiomechanicalAlert(alertData);
   }
 
-  void clearBiomechanicsHistory() {
-    _spineHistory.clear();
-    notifyListeners();
-  }
-
-  List<Map<String, dynamic>> getBiomechanicsSummary() {
-    if (_spineHistory.isEmpty) return [];
-
-    final dangerousReadings = _spineHistory.where(
-            (k) => _biomechanicalAnalyzer.checkThresholds(k)['danger'].isNotEmpty
-    ).length;
-
-    final warningReadings = _spineHistory.where(
-            (k) => _biomechanicalAnalyzer.checkThresholds(k)['warnings'].isNotEmpty
-    ).length;
-
-    final avgFlexion = _spineHistory.map((k) => k.relativeFlexion).reduce((a, b) => a + b) / _spineHistory.length;
-    final avgCompression = _spineHistory.map((k) => k.estimatedCompression).reduce((a, b) => a + b) / _spineHistory.length;
-
-    return [
-      {'label': 'Total Readings', 'value': _spineHistory.length.toString()},
-      {'label': 'Dangerous Postures', 'value': dangerousReadings.toString()},
-      {'label': 'Warning Postures', 'value': warningReadings.toString()},
-      {'label': 'Avg. Flexion', 'value': '${avgFlexion.toStringAsFixed(1)}°'},
-      {'label': 'Avg. Compression', 'value': '${avgCompression.toStringAsFixed(1)}%'},
-    ];
-  }
+  // --- BLE Communication Engine ---
 
   void _listenToBle() {
-    // Listen to connection status
     _bleStatusSubscription = _bleService.statusStream.listen((status) {
-      debugPrint("[AppState] BLE Status changed: $status");
       _connectionStatus = status;
 
       if (status == BleStatus.connected) {
-        debugPrint("[AppState] Connected - switching to real data");
         _useDummyData = false;
         _stopDummyDataStream();
-        _currentSpineKinematics = null;
-
-        // Reset crypto state
+        _isKeyValidated = false; // Wait for correct key verification
         if (_activationKey != null) {
           _cryptoService.reset();
           _cryptoService.init(_activationKey!);
         }
-      } else if (status == BleStatus.disconnected || status == BleStatus.error) {
-        debugPrint("[AppState] Disconnected/Error - switching to dummy data");
+      } else if (status == BleStatus.disconnected) {
         _useDummyData = true;
+        _isKeyValidated = false;
         _initializeBiomechanics();
       }
 
       notifyListeners();
     });
 
-    // Listen to incoming data
     _bleDataSubscription = _bleService.dataStream.listen((encryptedPacket) {
       if (encryptedPacket.isEmpty || _useDummyData) return;
 
       _packetCounter++;
-      debugPrint("[AppState] Received packet #$_packetCounter (${encryptedPacket.length} bytes)");
-
       try {
-        // Decrypt
         final String decryptedData = _cryptoService.decrypt(Uint8List.fromList(encryptedPacket));
 
-        if (decryptedData.isNotEmpty) {
-          debugPrint("[AppState] Decrypted data: '$decryptedData'");
-          _processData(decryptedData);
-          _successfulPackets++;
-          _lastUpdateTime = DateTime.now();
+        // SECURITY CHECK: If the key is wrong, decryptedData will be gibberish.
+        // A valid packet must contain commas based on our 8-part CSV format.
+        if (decryptedData.isNotEmpty && decryptedData.contains(',')) {
+          bool success = _processData(decryptedData);
+          if (success) {
+            _isKeyValidated = true; // Key verified!
+            _successfulPackets++;
+            _lastUpdateTime = DateTime.now();
+          } else {
+            _isKeyValidated = false;
+            _failedPackets++;
+          }
         } else {
-          debugPrint("[AppState] Empty decrypted data");
+          _isKeyValidated = false;
           _failedPackets++;
+          debugPrint("⚠️ Decryption result invalid. Possible wrong activation key.");
         }
-      } catch (e, stackTrace) {
-        debugPrint("[AppState] Error processing packet #$_packetCounter: $e");
-        debugPrint("[AppState] Stack trace: $stackTrace");
+      } catch (e) {
+        _isKeyValidated = false;
         _failedPackets++;
+        debugPrint("❌ Encryption Engine Error: $e");
       }
-
       notifyListeners();
     });
   }
 
-  void _processData(String dataString) {
+  /// Parses the 8-part CSV Hardware Format
+  bool _processData(String dataString) {
     try {
-      // Clean the string
-      final line = dataString.trim();
-      if (line.isEmpty) {
-        debugPrint("[AppState] Empty line after trim");
-        return;
-      }
+      final parts = dataString.trim().split(',');
 
-      debugPrint("[AppState] Processing: '$line'");
-
-      // Split CSV
-      final parts = line.split(',');
-      debugPrint("[AppState] Split into ${parts.length} parts: $parts");
-
+      // Validate format: must have exactly 8 parts (or at least 8)
       if (parts.length >= 8) {
-        // Parse all values
-        _pelvisPitch = double.tryParse(parts[0].trim()) ?? 0.0;
-        _pelvisRoll = double.tryParse(parts[1].trim()) ?? 0.0;
-        _pelvisYaw = double.tryParse(parts[2].trim()) ?? 0.0;
-
-        _lumbarPitch = double.tryParse(parts[3].trim()) ?? 0.0;
-        _lumbarRoll = double.tryParse(parts[4].trim()) ?? 0.0;
-        _lumbarYaw = double.tryParse(parts[5].trim()) ?? 0.0;
-
-        _relativeFlexion = double.tryParse(parts[6].trim()) ?? 0.0;
+        _pelvisPitch = double.tryParse(parts[0]) ?? 0.0;
+        _pelvisRoll = double.tryParse(parts[1]) ?? 0.0;
+        _pelvisYaw = double.tryParse(parts[2]) ?? 0.0;
+        _lumbarPitch = double.tryParse(parts[3]) ?? 0.0;
+        _lumbarRoll = double.tryParse(parts[4]) ?? 0.0;
+        _lumbarYaw = double.tryParse(parts[5]) ?? 0.0;
+        _relativeFlexion = double.tryParse(parts[6]) ?? 0.0;
         _espState = parts[7].trim().toUpperCase();
 
-        debugPrint("[AppState] Parsed successfully:");
-        debugPrint("  Pelvis: P=$_pelvisPitch R=$_pelvisRoll Y=$_pelvisYaw");
-        debugPrint("  Lumbar: P=$_lumbarPitch R=$_lumbarRoll Y=$_lumbarYaw");
-        debugPrint("  Flexion: $_relativeFlexion°");
-        debugPrint("  State: $_espState");
-
-        // Create IMU data
         final upperIMU = IMUSensorData(
             sensorId: 'upper',
             timestamp: DateTime.now(),
@@ -342,11 +294,9 @@ class AppState extends ChangeNotifier {
             accelX: 0.0, accelY: 0.0, accelZ: 9.8
         );
 
-        // Calculate kinematics
         final kinematics = _biomechanicalAnalyzer.calculateKinematics(upperIMU, lowerIMU);
 
-        // Use ESP32's calculated flexion
-        final correctedKinematics = SpineKinematics(
+        final combinedKinematics = SpineKinematics(
           upperSensor: upperIMU,
           lowerSensor: lowerIMU,
           timestamp: kinematics.timestamp,
@@ -357,56 +307,47 @@ class AppState extends ChangeNotifier {
           estimatedCompression: kinematics.estimatedCompression,
         );
 
-        _updateRealtimeKinematics(correctedKinematics);
-
-      } else {
-        debugPrint("[AppState] Invalid data format: expected 8 fields, got ${parts.length}");
+        _updateRealtimeKinematics(combinedKinematics);
+        return true;
       }
-    } catch (e, stackTrace) {
-      debugPrint("[AppState] Error parsing data: $e");
-      debugPrint("[AppState] Stack trace: $stackTrace");
+      return false;
+    } catch (e) {
+      debugPrint("[Parser] CSV parsing error: $e");
+      return false;
     }
   }
 
-  void updateKinematicsManually(SpineKinematics kinematics) {
-    _currentSpineKinematics = kinematics;
-    _motionAnalysis = _biomechanicalAnalyzer.checkThresholds(kinematics);
-    notifyListeners();
-  }
+  // --- UI Styling Helpers ---
 
   Color getMotionSafetyColor() {
     switch (postureState) {
-      case PostureState.critical: return Colors.red;
-      case PostureState.warning: return Colors.orange;
-      case PostureState.safe: return Colors.green;
-      default: return Colors.grey;
+      case PostureState.critical: return Colors.redAccent;
+      case PostureState.warning: return Colors.orangeAccent;
+      case PostureState.safe: return Colors.greenAccent;
+      default: return Colors.blueGrey;
     }
   }
 
   String getMotionSafetyText() {
     switch (postureState) {
-      case PostureState.critical: return 'Dangerous Posture';
-      case PostureState.warning: return 'Warning - Check Posture';
-      case PostureState.safe: return 'Safe Posture';
-      default: return 'Unknown State';
+      case PostureState.critical: return 'CRITICAL COMPRESSION';
+      case PostureState.warning: return 'POOR ALIGNMENT';
+      case PostureState.safe: return 'HEALTHY POSTURE';
+      default: return 'SCANNING HARDWARE...';
     }
   }
 
-  String getPostureStateString() {
-    return _espState;
-  }
+  List<Map<String, dynamic>> getSessionSummary() {
+    if (_spineHistory.isEmpty) return [];
 
-  // Debug helper
-  String getDebugInfo() {
-    return '''
-Debug Info:
-- Total Packets: $_packetCounter
-- Successful: $_successfulPackets
-- Failed: $_failedPackets
-- Last Update: ${_lastUpdateTime?.toString() ?? 'Never'}
-- Connection: $_connectionStatus
-- Dummy Data: $_useDummyData
-- Current IV: ${_cryptoService.getIVState()}
-    ''';
+    final avgFlexion = _spineHistory.map((k) => k.relativeFlexion).reduce((a, b) => a + b) / _spineHistory.length;
+    final maxComp = _spineHistory.map((k) => k.estimatedCompression).reduce((a, b) => a > b ? a : b);
+
+    return [
+      {'label': 'Session User', 'value': _userName},
+      {'label': 'Average Flexion', 'value': '${avgFlexion.toStringAsFixed(1)}°'},
+      {'label': 'Peak Compression', 'value': '${maxComp.toStringAsFixed(1)}%'},
+      {'label': 'Total Packets', 'value': '$_packetCounter'},
+    ];
   }
 }

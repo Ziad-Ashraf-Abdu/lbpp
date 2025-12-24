@@ -1,7 +1,6 @@
 // lib/utils/moving_average.dart
 
 /// A simple moving average filter.
-/// It maintains a window of the last N values to smooth out fluctuations.
 class MovingAverage {
   final int windowSize;
   final List<double> _values = [];
